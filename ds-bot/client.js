@@ -651,6 +651,9 @@ var ZH = {
   "Bubble width": "气泡宽度",
   "Text width": "正文宽度",
   "Show thinking": "显示思考过程",
+  "Show Bot chats": "显示 Bot 会话",
+  "Show each Bot in the sidebar. Off, the sidebar lists group chats only; open a Bot from a group, search, or @.": "在侧栏显示每个 Bot。关闭时侧栏只列出群聊；从群成员、搜索或 @ 进入 Bot 对话。",
+  "No group chats yet. Create a group chat, or turn on Show Bot chats in Settings.": "还没有群聊。新建一个群聊，或在设置里打开「显示 Bot 会话」。",
   "Enter sends message": "回车发送消息",
   "Bots · {count}": "Bot · {count}",
   "First in the sidebar. Pick another Bot to hand it the role; {name} then stops being a Main Bot.": "排在侧栏最上面。选另一个 Bot 就会把主 Bot 交给它，{name} 随之不再是主 Bot。",
@@ -14983,17 +14986,19 @@ function TeamSidebar(props) {
     for (const id of list.ids) stamps[id] = list.byId[id]?.updatedAt ?? 0;
     return JSON.stringify(stamps);
   });
+  const showBots = roster.prefs?.showBots === true;
   const order = (0, import_react33.useMemo)(() => {
     const stamps = JSON.parse(updated);
     const entries2 = [
-      ...roster.bots.filter((bot) => bot.id !== roster.mainBotId).map((bot) => ({ kind: "bot", item: bot, at: stamps[currentPart(bot)] ?? bot.createdAt })),
+      ...showBots ? roster.bots.filter((bot) => bot.id !== roster.mainBotId).map((bot) => ({ kind: "bot", item: bot, at: stamps[currentPart(bot)] ?? bot.createdAt })) : [],
       ...roster.rooms.map((room2) => ({ kind: "room", item: room2, at: stamps[room2.id] ?? room2.createdAt })),
       // The Agent sorts by its most recent Session, falling back to when it was added.
       ...(roster.agents ?? []).map((agent) => ({ kind: "agent", item: agent, at: Math.max(0, ...agent.sessions.map((id) => stamps[id] ?? 0)) || agent.createdAt }))
     ];
     return entries2.sort((a, b) => Number(Boolean(b.item.pinned)) - Number(Boolean(a.item.pinned)) || b.at - a.at);
-  }, [roster, updated]);
-  const main = roster.byId[roster.mainBotId];
+  }, [roster, updated, showBots]);
+  const main = showBots ? roster.byId[roster.mainBotId] : void 0;
+  const emptyList = wideContent && !showBots && roster.ready && order.length === 0;
   useListGlide(listRef, wideContent, order.map((entry) => entry.item.id).join(","));
   useLandOnMainBot(roster, useSessions, actions);
   useReportReady(roster.ready, roster);
@@ -15223,6 +15228,7 @@ function TeamSidebar(props) {
       "div",
       { ref: listRef, className: "bt-list", role: "region", "aria-label": t("Bot list") },
       wideContent ? main ? (0, import_react33.createElement)(BotRow, { ...rowProps, bot: main, marked: markedUnread[main.id] === true }) : roster.ready ? null : (0, import_react33.createElement)("div", { className: "bt-hint" }, bootFailed ? bootHint() : t("Setting up your Main Bot…")) : null,
+      emptyList ? (0, import_react33.createElement)("div", { className: "bt-hint bt-list-empty" }, t("No group chats yet. Create a group chat, or turn on Show Bot chats in Settings.")) : null,
       order.map((entry) => entry.kind === "bot" ? (0, import_react33.createElement)(BotRow, { key: entry.item.id, ...rowProps, bot: entry.item, marked: markedUnread[entry.item.id] === true }) : entry.kind === "room" ? (0, import_react33.createElement)(RoomRow, { key: entry.item.id, ...rowProps, room: entry.item, marked: markedUnread[entry.item.id] === true }) : (0, import_react33.createElement)(AgentRow, { key: entry.item.id, ...rowProps, agent: entry.item, marked: markedUnread[entry.item.id] === true }))
     ),
     foot
@@ -23114,7 +23120,12 @@ function GeneralPage({ roster, actions, run: run2 }) {
       // The flat layout's text has a width of its own; the bubble width stays for the user's messages.
       layoutOf(prefs) === "flat" ? (0, import_react54.createElement)(SetRow, { label: t("Text width") }, (0, import_react54.createElement)(WidthSlider, { label: t("Text width"), value: flatWidthOf(prefs), save: (flatWidth) => run2(actions.setPrefs({ flatWidth })) })) : null,
       (0, import_react54.createElement)(SetRow, { label: t("Bubble width") }, (0, import_react54.createElement)(WidthSlider, { label: t("Bubble width"), value: widthOf(prefs), save: (width) => run2(actions.setPrefs({ width })) })),
-      (0, import_react54.createElement)(SetRow, { label: t("Show thinking") }, (0, import_react54.createElement)(Switch, { label: t("Show thinking"), on: thinkingShown(prefs), onChange: (thinking) => run2(actions.setPrefs({ thinking })) }))
+      (0, import_react54.createElement)(SetRow, { label: t("Show thinking") }, (0, import_react54.createElement)(Switch, { label: t("Show thinking"), on: thinkingShown(prefs), onChange: (thinking) => run2(actions.setPrefs({ thinking })) })),
+      (0, import_react54.createElement)(
+        SetRow,
+        { label: t("Show Bot chats"), hint: t("Show each Bot in the sidebar. Off, the sidebar lists group chats only; open a Bot from a group, search, or @.") },
+        (0, import_react54.createElement)(Switch, { label: t("Show Bot chats"), on: prefs.showBots === true, onChange: (showBots) => run2(actions.setPrefs({ showBots })) })
+      )
     ),
     (0, import_react54.createElement)(
       SetSection,
