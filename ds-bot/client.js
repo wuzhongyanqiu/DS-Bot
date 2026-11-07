@@ -14647,7 +14647,7 @@ function installFrameWatch(frame) {
 function botSessionOf(roster, sessionId) {
   if (typeof sessionId !== "string" || sessionId === "") return null;
   const known = (roster?.bots ?? []).find((bot) => bot.id === sessionId || bot.sessionId === sessionId || (bot.parts ?? []).includes(sessionId));
-  return known === void 0 ? null : sessionId;
+  return known === void 0 ? null : known.sessionId ?? known.id;
 }
 
 // src/client/sidebar.js

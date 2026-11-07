@@ -145,6 +145,26 @@ test('a group chat in front releases the focused Bot chat', async (t) => {
   assert.deepEqual((await call('visible-session', { sessionId: 'not-a-session' })).error, { code: 'bot/not-found', message: 'Unknown session', details: {} })
 })
 
+test('an Agent Session in front releases the focused Bot chat too', async (t) => {
+  const { call, stop } = start({
+    version: 1,
+    mainBotIds: ['m1'],
+    revision: 1,
+    bots: { m1: { id: 'm1', name: 'Chief', role: 'Chief of Staff', instructions: '', createdAt: 1 } },
+    rooms: {},
+    agents: { a1: { id: 'a1', name: 'DSH Agent', sessions: ['agent-session'], createdAt: 2 } },
+    exchanges: [],
+    exchangeTurns: {},
+    questions: {},
+  })
+  t.after(stop)
+  const focused = () => rt.capabilityFocusedSession()
+  assert.equal((await call('visible-session', { sessionId: 'm1' })).value, true)
+  assert.equal(focused(), 'm1')
+  assert.equal((await call('visible-session', { sessionId: 'agent-session' })).value, true)
+  assert.equal(focused(), undefined)
+})
+
 test('the client channel answers from the saved state', async (t) => {
   const { call, stop } = start({
     version: 1,

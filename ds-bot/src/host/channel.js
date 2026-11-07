@@ -627,7 +627,8 @@ export function install(rt) {
           await rt.load()
           return ok(await rt.imEndpoint(endpoint, body))
         // Which Session is in front. Read-only windows report it too: it only
-        // mounts the capability servers this window is about to show.
+        // mounts the capability servers this window is about to show, so this read
+        // may start an MCP process.
         case 'visible-session': {
           await rt.load()
           if (body.sessionId === null || body.sessionId === undefined) {

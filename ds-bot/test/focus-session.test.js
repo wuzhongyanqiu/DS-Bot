@@ -11,9 +11,11 @@ test('only a Bot session counts as the focused conversation', () => {
       { id: 'writer', sessionId: 'writer', parts: [] },
     ],
   }
-  assert.equal(botSessionOf(roster, 'chief'), 'chief')
+  // The Bot's id and any of its parts map to the current chat that stays warm.
+  assert.equal(botSessionOf(roster, 'chief'), 'part-2')
   assert.equal(botSessionOf(roster, 'part-2'), 'part-2')
-  assert.equal(botSessionOf(roster, 'part-1'), 'part-1')
+  // An earlier part maps to the Bot's current chat, which is the one that stays warm.
+  assert.equal(botSessionOf(roster, 'part-1'), 'part-2')
   assert.equal(botSessionOf(roster, 'writer'), 'writer')
   // A group chat's own Session, a DSH Agent Session and an empty view release it.
   assert.equal(botSessionOf(roster, 'room-1'), null)

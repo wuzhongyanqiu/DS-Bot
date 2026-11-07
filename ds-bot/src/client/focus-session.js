@@ -5,5 +5,6 @@ export function botSessionOf(roster, sessionId) {
   const known = (roster?.bots ?? []).find(bot => bot.id === sessionId
     || bot.sessionId === sessionId
     || (bot.parts ?? []).includes(sessionId))
-  return known === undefined ? null : sessionId
+  // An earlier part is read-only: the Bot's current chat is what stays warm.
+  return known === undefined ? null : (known.sessionId ?? known.id)
 }
