@@ -651,6 +651,8 @@ var ZH = {
   "Bubble width": "气泡宽度",
   "Text width": "正文宽度",
   "Show thinking": "显示思考过程",
+  "Scan local Agent CLIs": "扫描本地 Agent CLI",
+  "Off, their routes are withdrawn from every model menu.": "关闭后，它们的路由会从所有模型菜单撤下。",
   "Show Bot chats": "显示 Bot 会话",
   "Show each Bot in the sidebar. Off, the sidebar lists group chats only; open a Bot from a group, search, or @.": "在侧栏显示每个 Bot。关闭时侧栏只列出群聊；从群成员、搜索或 @ 进入 Bot 对话。",
   "No group chats yet. Create a group chat, or turn on Show Bot chats in Settings.": "还没有群聊。新建一个群聊，或在设置里打开「显示 Bot 会话」。",
@@ -4694,6 +4696,7 @@ var CUSTOM = ["AC", "rose"];
 var logoOf = (engine) => AGENT_LOGOS[engine];
 var badgeOf = (engine) => AGENT_BADGES[engine] ?? (engine?.startsWith("acp-") ? CUSTOM : void 0);
 var isLocalRoute = (ref) => badgeOf(String(ref ?? "").split("/")[0]) !== void 0;
+var modelsForBot = (models, bot) => bot?.engine === void 0 ? (models ?? []).filter((model) => !isLocalRoute(model.ref)) : models ?? [];
 function agentAvatar(engine) {
   const logo = logoOf(engine);
   if (logo?.kind === "image") return { image: logo.src };
@@ -9339,8 +9342,8 @@ function EffortBar({ reasoning, current, onPick }) {
     )
   );
 }
-function ModelRows({ roster, current, onPick }) {
-  return groupModels(roster.models).map(([provider, list]) => (0, import_react19.createElement)(
+function ModelRows({ models, current, defaultModel, onPick }) {
+  return groupModels(models).map(([provider, list]) => (0, import_react19.createElement)(
     import_react19.Fragment,
     { key: list[0].provider ?? provider },
     (0, import_react19.createElement)("div", { className: "bt-model-group", role: "presentation" }, provider),
@@ -9355,7 +9358,7 @@ function ModelRows({ roster, current, onPick }) {
         onClick: () => onPick(model.ref)
       },
       (0, import_react19.createElement)("span", { className: "bt-menu-label" }, model.name),
-      model.ref === roster.defaultModel ? (0, import_react19.createElement)("span", { className: "bt-menu-hint" }, t("Default")) : null,
+      model.ref === defaultModel ? (0, import_react19.createElement)("span", { className: "bt-menu-hint" }, t("Default")) : null,
       (0, import_react19.createElement)("span", { className: "bt-model-tick", "aria-hidden": true }, model.ref === current ? (0, import_react19.createElement)(CheckIcon) : null)
     ))
   ));
@@ -9435,7 +9438,8 @@ function ModelMenu({ bot, roster, actions, run: run2, wide = false, onPick, onPi
     if (onPickEffort) onPickEffort(effort);
     else if (effort !== bot.effort) void run2(actions.updateBot(bot.id, { effort: effort ?? null }));
   };
-  const models = roster.models ?? [];
+  const allModels = roster.models ?? [];
+  const models = modelsForBot(allModels, bot);
   const manage = manageModels(actions);
   const hasEfforts = withEfforts && effortStops(reasoning).length > 0;
   return (0, import_react19.createElement)(
@@ -9451,14 +9455,14 @@ function ModelMenu({ bot, roster, actions, run: run2, wide = false, onPick, onPi
         "aria-haspopup": "menu",
         "aria-expanded": isOpen,
         "aria-label": t("Model: {model}", { model: shown?.name ?? t("none") }),
-        "data-missing": shown !== void 0 && !shown.served && models.length > 0 ? "" : void 0,
+        "data-missing": shown !== void 0 && !shown.served && allModels.length > 0 ? "" : void 0,
         onClick: toggle
       },
       (0, import_react19.createElement)(
         "span",
         { className: "bt-model-copy" },
         (0, import_react19.createElement)("span", { className: "bt-model-name" }, shown?.name ?? t("Choose a model")),
-        shown ? (0, import_react19.createElement)("span", { className: "bt-model-provider" }, shown.served || models.length === 0 ? !withEfforts || effortLabel === void 0 ? shown.provider : `${shown.provider} · ${effortLabel}` : t("{provider} · not available", { provider: shown.provider })) : null
+        shown ? (0, import_react19.createElement)("span", { className: "bt-model-provider" }, shown.served || allModels.length === 0 ? !withEfforts || effortLabel === void 0 ? shown.provider : `${shown.provider} · ${effortLabel}` : t("{provider} · not available", { provider: shown.provider })) : null
       ),
       (0, import_react19.createElement)(Caret)
     ),
@@ -9468,7 +9472,7 @@ function ModelMenu({ bot, roster, actions, run: run2, wide = false, onPick, onPi
       (0, import_react19.createElement)(
         "div",
         { className: "bt-model-scroll" },
-        models.length > 0 ? (0, import_react19.createElement)(ModelRows, { roster, current, onPick: pick2 }) : (0, import_react19.createElement)("div", { className: "bt-model-none" }, t("No models are set up in DeepSeek Harness yet."))
+        models.length > 0 ? (0, import_react19.createElement)(ModelRows, { models, current, defaultModel: roster.defaultModel, onPick: pick2 }) : (0, import_react19.createElement)("div", { className: "bt-model-none" }, t("No models are set up in DeepSeek Harness yet."))
       ),
       hasEfforts || manage ? (0, import_react19.createElement)(
         "div",
@@ -9493,10 +9497,11 @@ function ModelChoiceDock({ sessionId, useRoster, actions }) {
     if (shown) void actions.refreshModels?.();
   }, [shown, sessionId]);
   if (!bot || currentPart(bot) !== sessionId || !roster.ready) return null;
-  const models = roster.models ?? [];
+  const allModels = roster.models ?? [];
+  const models = modelsForBot(allModels, bot);
   const usable = models.filter((model) => !model.needsKey);
-  const lost = bot.model ? !models.some((model) => model.ref === bot.model) : false;
-  if (bot.model && (!lost || models.length === 0)) return null;
+  const lost = bot.model ? !allModels.some((model) => model.ref === bot.model) : false;
+  if (bot.model && (!lost || allModels.length === 0)) return null;
   const keyFor = usable.length === 0 && actions.setProviderKey ? models.find((model) => model.needsKey) : void 0;
   const manage = manageModels(actions);
   const pick2 = (ref) => {
@@ -17445,7 +17450,7 @@ function freshBotName(roster, base = "New Bot") {
   return `${base} ${index}`;
 }
 function startModel(roster) {
-  const usable = (roster.models ?? []).filter((model) => model.needsKey !== true);
+  const usable = (roster.models ?? []).filter((model) => model.needsKey !== true && !isLocalRoute(model.ref));
   return (usable.find((model) => model.ref === roster.prefs?.defaultBotModel) ?? usable.find((model) => model.ref === roster.defaultModel) ?? usable[0])?.ref ?? "";
 }
 function createPayload({ name, look, image, model, effort, brief }) {
@@ -17583,7 +17588,7 @@ function CreateBot({ roster, actions, start, brief = "", onBack, canGoBack, onCr
         setModel(ref);
         setEffort(void 0);
       }, onPickEffort: (picked) => setEffort(picked ?? null) }),
-      (0, import_react39.createElement)("span", { className: "bt-note" }, model ? t("The Bot runs on this model. You can change it later in its details.") : (roster.models ?? []).length > 0 ? t("Pick a model here, or the Bot asks for one in its chat.") : t("Add a provider and a model in DeepSeek Harness first, or pick one in the Bot's chat later."))
+      (0, import_react39.createElement)("span", { className: "bt-note" }, model ? t("The Bot runs on this model. You can change it later in its details.") : modelsForBot(roster.models, {}).length > 0 ? t("Pick a model here, or the Bot asks for one in its chat.") : t("Add a provider and a model in DeepSeek Harness first, or pick one in the Bot's chat later."))
     ),
     error ? (0, import_react39.createElement)("div", { className: "bt-error", role: "alert", style: { padding: 0 } }, error) : null,
     (0, import_react39.createElement)(
@@ -22949,11 +22954,14 @@ function AgentForm({ initial, submit, close }) {
     )
   );
 }
-function LocalAgentsPage({ run: run2, Section: Section2, Row: Row4 }) {
+function LocalAgentsPage({ run: run2, Section: Section2, Row: Row4, Switch: Switch2 }) {
   const [view, setView] = (0, import_react53.useState)(null);
   const [editing, setEditing] = (0, import_react53.useState)(null);
   const load = (endpoint) => run2(call(endpoint).then(setView));
   const refresh = () => load("local-agent-refresh");
+  const setScanning = (enabled) => {
+    void run2(call("local-agent-scan", { enabled }).then(setView));
+  };
   (0, import_react53.useEffect)(() => {
     void load("local-agents");
   }, []);
@@ -22963,6 +22971,11 @@ function LocalAgentsPage({ run: run2, Section: Section2, Row: Row4 }) {
     (0, import_react53.createElement)(
       Section2,
       { key: "found", title: t("Detected agents") },
+      (0, import_react53.createElement)(
+        Row4,
+        { key: "scan", label: t("Scan local Agent CLIs"), hint: t("Off, their routes are withdrawn from every model menu.") },
+        Switch2 ? (0, import_react53.createElement)(Switch2, { label: t("Scan local Agent CLIs"), on: view.scanning !== false, onChange: setScanning }) : null
+      ),
       view.detected.length === 0 ? (0, import_react53.createElement)(Row4, { label: t("No agent CLIs found") }) : null,
       view.detected.map((agent) => (0, import_react53.createElement)(
         Row4,
@@ -23419,7 +23432,7 @@ function SettingsDialog({ page, id, roster, actions, useUpdate, leaving = false 
             shown === "computer" ? (0, import_react54.createElement)(ComputerPage, { roster, actions, run: run2, Section: SetSection, Row: SetRow, Switch }) : null,
             shown === "general" ? (0, import_react54.createElement)(GeneralPage, { roster, actions, run: run2 }) : null,
             shown === "models" ? (0, import_react54.createElement)(ProvidersPage, { actions, run: run2, Section: SetSection }) : null,
-            shown === "local-agents" ? (0, import_react54.createElement)(LocalAgentsPage, { run: run2, Section: SetSection, Row: SetRow }) : null,
+            shown === "local-agents" ? (0, import_react54.createElement)(LocalAgentsPage, { run: run2, Section: SetSection, Row: SetRow, Switch }) : null,
             bot ? (0, import_react54.createElement)("div", { className: "bt-settings-form" }, (0, import_react54.createElement)(BotSettingsForm, { key: bot.id, bot, roster, actions, run: run2 })) : null,
             shown === "bots" && !bot ? (0, import_react54.createElement)(BotsPage, { roster, actions, run: run2 }) : null,
             room2 ? (0, import_react54.createElement)("div", { className: "bt-settings-form" }, (0, import_react54.createElement)(GroupSettingsForm, { key: room2.id, room: room2, roster, actions, run: run2 })) : null,

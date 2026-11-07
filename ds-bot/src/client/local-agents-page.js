@@ -26,18 +26,21 @@ function AgentForm({ initial, submit, close }) {
       h('button', { type: 'button', className: 'bt-soft', onClick: close }, t('Cancel'))))
 }
 
-export function LocalAgentsPage({ run, Section, Row }) {
+export function LocalAgentsPage({ run, Section, Row, Switch }) {
   const [view, setView] = useState(null)
   const [editing, setEditing] = useState(null) // 'new' | agent object
   // run() reports a failure and resolves to whether it worked, so the page's
   // data is taken from the call itself.
   const load = endpoint => run(call(endpoint).then(setView))
   const refresh = () => load('local-agent-refresh')
+  const setScanning = enabled => { void run(call('local-agent-scan', { enabled }).then(setView)) }
   useEffect(() => { void load('local-agents') }, [])
   if (view === null) return null
   if (view.available === false) return h('p', { className: 'bt-set-hint' }, t('This DSH cannot register local agent routes.'))
   return [
     h(Section, { key: 'found', title: t('Detected agents') },
+      h(Row, { key: 'scan', label: t('Scan local Agent CLIs'), hint: t('Off, their routes are withdrawn from every model menu.') },
+        Switch ? h(Switch, { label: t('Scan local Agent CLIs'), on: view.scanning !== false, onChange: setScanning }) : null),
       view.detected.length === 0 ? h(Row, { label: t('No agent CLIs found') }) : null,
       view.detected.map(agent => h(Row, {
         key: agent.route, label: agent.name,

@@ -591,6 +591,8 @@ const ZH = {
   'Bubble width': '气泡宽度',
   'Text width': '正文宽度',
   'Show thinking': '显示思考过程',
+  'Scan local Agent CLIs': '扫描本地 Agent CLI',
+  'Off, their routes are withdrawn from every model menu.': '关闭后，它们的路由会从所有模型菜单撤下。',
   'Show Bot chats': '显示 Bot 会话',
   'Show each Bot in the sidebar. Off, the sidebar lists group chats only; open a Bot from a group, search, or @.': '在侧栏显示每个 Bot。关闭时侧栏只列出群聊；从群成员、搜索或 @ 进入 Bot 对话。',
   'No group chats yet. Create a group chat, or turn on Show Bot chats in Settings.': '还没有群聊。新建一个群聊，或在设置里打开「显示 Bot 会话」。',

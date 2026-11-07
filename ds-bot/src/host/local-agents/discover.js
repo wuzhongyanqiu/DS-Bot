@@ -14,11 +14,33 @@ const DROP_EXACT = new Set([
 ])
 const DROP_PREFIX = ['DS_BOT_', 'DSH_']
 
+// The process PATH plus the folders the scan learned about. A dock launch has a
+// sparse PATH; a CLI installed by npm starts node through `env`, so without the
+// login shell's folders it dies before its first line.
+export function searchPath() {
+  const seen = new Set()
+  const dirs = []
+  for (const dir of [...(process.env.PATH ?? '').split(delimiter), ...found.dirs]) {
+    if (dir === '' || seen.has(dir)) continue
+    seen.add(dir)
+    dirs.push(dir)
+  }
+  return dirs.join(delimiter)
+}
+
 export function cleanEnv(extra = {}) {
   const env = {}
   for (const [key, value] of Object.entries(process.env)) {
     if (DROP_EXACT.has(key) || DROP_PREFIX.some(prefix => key.startsWith(prefix))) continue
     env[key] = value
+  }
+  const path = searchPath()
+  if (path !== '') {
+    let set = false
+    for (const key of Object.keys(env)) {
+      if (key.toLowerCase() === 'path') { env[key] = path; set = true }
+    }
+    if (!set) env.PATH = path
   }
   return { ...env, ...extra }
 }
@@ -36,8 +58,8 @@ const outputOf = (file, args) => new Promise((resolve) => {
 // prefix. Both are looked up in the background and kept for a minute.
 let found = { at: 0, dirs: [] }
 let looking
-export function refreshSearchDirs() {
-  if (Date.now() - found.at < 60_000) return Promise.resolve()
+export function refreshSearchDirs(force = false) {
+  if (!force && Date.now() - found.at < 60_000) return Promise.resolve()
   const windows = process.platform === 'win32'
   looking ??= Promise.all([
     windows ? undefined : outputOf(process.env.SHELL ?? '/bin/sh', ['-l', '-c', 'printf %s "$PATH"']),

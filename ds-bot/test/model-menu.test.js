@@ -40,9 +40,9 @@ function nodes(tree, match) {
 }
 
 // `harness`: the window has DSH's own settings to send the user to, as the plugin does.
-function dock(models, { model, ready = true, harness = true } = {}) {
+function dock(models, { model, ready = true, harness = true, engine } = {}) {
   const picked = []
-  const bot = { id: 'chief', name: 'Chief', model }
+  const bot = { id: 'chief', name: 'Chief', model, ...(engine === undefined ? {} : { engine }) }
   const roster = { ready, byId: { chief: bot }, models, defaultModel: models[0]?.ref }
   const tree = ModelChoiceDock({
     sessionId: bot.id, useRoster: select => select(roster),
@@ -213,4 +213,29 @@ test('setting up a custom model opens DS Bot\'s Models page, else DSH\'s own Mod
   custom(choices({ openModels: () => opened.push('models'), openHarnessModels: () => opened.push('harness models'), openHarnessSettings: () => opened.push('harness') })).props.onClick()
   custom(choices({ openHarnessModels: () => opened.push('harness models'), openHarnessSettings: () => opened.push('harness') })).props.onClick()
   assert.deepEqual(opened, ['models', 'harness models'])
+})
+
+// A local-agent route belongs to an abot's own menu; a Bot on a remote model
+// must not be able to pick it and become one by accident.
+const withLocal = [
+  ...models,
+  { ref: 'claude-code/default', provider: 'claude-code', providerName: 'Claude Code', name: 'Claude Code' },
+]
+
+test('a normal Bot\'s first model choice leaves out local-agent routes', () => {
+  const { tree, picked } = dock(withLocal)
+  const groups = nodes(tree, node => node.props.className === 'bt-model-choice-group')
+  assert.deepEqual(groups.map(group => group.props['aria-label']), ['DeepSeek', 'Ollama'])
+  const refs = nodes(tree, node => node.type === 'button' && typeof node.props['aria-label'] === 'string')
+    .map(node => node.props['aria-label'])
+  assert.equal(refs.some(label => label.startsWith('Claude Code')), false)
+  assert.equal(nodes(tree, node => node.type === 'button' && node.props.title === 'claude-code/default').length, 0)
+  assert.equal(picked.length, 0)
+})
+
+test('an abot\'s first model choice offers its local-agent route', () => {
+  const { tree } = dock(withLocal, { engine: 'claude-code' })
+  const local = nodes(tree, node => node.type === 'button' && node.props.title === 'claude-code/default')
+  assert.equal(local.length, 1)
+  assert.equal(local[0].props['aria-label'], 'Claude Code · Claude Code')
 })

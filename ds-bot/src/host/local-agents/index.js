@@ -13,7 +13,8 @@ import { AcpEngine } from './acp.js'
 import { CodexEngine } from './codex.js'
 import { ClaudeEngine } from './claude.js'
 import { ENGINES, customRoute, isLocalAgentRoute, validateCustom } from './engines.js'
-import { findExecutable, probeVersion, refreshSearchDirs } from './discover.js'
+import { cleanEnv, findExecutable, probeVersion, refreshSearchDirs } from './discover.js'
+import { attachRoutes } from './routes.js'
 
 const SIGN_IN = {
   'devin-cli': 'devin auth login',
@@ -46,11 +47,23 @@ export function install(rt) {
   const customAgents = () => store().custom
   const customRouteId = () => store().custom.map(agent => customRoute(agent.id))
   const allRoutes = () => [...Object.keys(ENGINES), ...customRouteId()]
+  const scanning = () => store().scan !== false
 
   // Only CLIs found on this machine get a route; the scan result feeds the page.
   const found = new Map()
   async function scan() {
+    if (!scanning()) {
+      found.clear()
+      applyRoutes()
+      return [...found.values()]
+    }
     await refreshSearchDirs()
+    // The switch may have been turned off while the search ran.
+    if (!scanning()) {
+      found.clear()
+      applyRoutes()
+      return []
+    }
     for (const route of Object.keys(ENGINES)) {
       const spec = ENGINES[route]
       const path = findExecutable(spec.command)
@@ -64,7 +77,9 @@ export function install(rt) {
     for (const entry of found.values()) {
       if (entry.version !== undefined) continue
       const spec = ENGINES[entry.route]
-      const result = await probeVersion(entry.path, spec.version ?? ['--version'], undefined).catch(() => undefined)
+      // The CLI may be a script that starts node through `env`: it needs the
+      // same PATH additions the scan used, not the dock's sparse one.
+      const result = await probeVersion(entry.path, spec.version ?? ['--version'], cleanEnv()).catch(() => undefined)
       entry.version = result?.version
     }
   }
@@ -100,17 +115,14 @@ export function install(rt) {
     },
   })
 
-  let registration
   const supported = () => typeof ctx.llm?.registerAdapter === 'function'
+  const router = attachRoutes({ llm: ctx.llm, adapter, log: message => ctx.logger?.warn?.(`ds-bot: ${message}`) })
   function applyRoutes() {
     if (!supported()) return
-    const routes = [...found.keys(), ...customRouteId()]
-    // The initial registration needs at least one provider; an empty replace
-    // is legal and keeps the adapter registered with zero routes.
-    if (registration === undefined) {
-      if (routes.length === 0) return
-      registration = ctx.llm.registerAdapter(routes, adapter)
-    } else registration.replace(routes)
+    // Off, no local-agent route is offered at all; the custom agents stay on
+    // the page but their routes are withdrawn with the detected ones.
+    const routes = scanning() ? [...found.keys(), ...customRouteId()] : []
+    router.apply(routes)
   }
   // Custom agents hold a route whether or not their command resolves yet; a
   // missing one fails at prompt time with a typed error.
@@ -122,7 +134,7 @@ export function install(rt) {
   // setup would leave the adapter disposed from the moment it installs.
   ctx.effect(() => () => {
     void adapter.dispose()
-    registration?.()
+    router.dispose()
   }, 'ds-bot: local agents')
 
   // ---------------------------------------------------------------------------
@@ -176,19 +188,31 @@ export function install(rt) {
 
   const detected = () => [...found.values()].map(entry => ({ route: entry.route, name: entry.name, path: entry.path, version: entry.version ?? null, signIn: entry.signIn }))
   const customView = () => store().custom.map(agent => ({ ...agent, route: customRoute(agent.id) }))
+  const view = () => ({ available: supported(), scanning: scanning(), detected: detected(), custom: customView() })
 
   async function localAgentsEndpoint(endpoint, body) {
     switch (endpoint) {
       case 'local-agents': {
         await scan()
         await probeVersions()
-        return { available: supported(), detected: detected(), custom: customView() }
+        return view()
       }
       case 'local-agent-refresh': {
         adapter.dropModelCache()
         await scan()
         await probeVersions()
-        return { available: supported(), detected: detected(), custom: customView() }
+        return view()
+      }
+      case 'local-agent-scan': {
+        if (typeof body.enabled !== 'boolean') throw new Error('enabled must be true or false')
+        if (body.enabled) delete store().scan
+        else store().scan = false
+        found.clear()
+        adapter.dropModelCache()
+        await scan()
+        await probeVersions()
+        await rt.save()
+        return view()
       }
       case 'local-agent-add': {
         const clean = validateCustom(body)

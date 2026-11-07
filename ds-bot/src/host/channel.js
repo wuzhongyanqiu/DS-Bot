@@ -628,6 +628,7 @@ export function install(rt) {
           return ok(await rt.imEndpoint(endpoint, body))
         case 'local-agents':
         case 'local-agent-refresh':
+        case 'local-agent-scan':
         case 'local-agent-add':
         case 'local-agent-update':
         case 'local-agent-remove':
