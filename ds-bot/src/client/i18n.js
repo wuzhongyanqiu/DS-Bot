@@ -132,6 +132,8 @@ const ZH = {
   'Not connected': '未连接',
   Disabled: '已停用',
   'Disabled. Turn scanning on to use it again.': '已停用，打开扫描恢复。',
+  'Nothing to refresh while scanning is off.': '扫描关闭时没有可刷新的内容。',
+  'An agent added while scanning is off is unavailable until scanning is on.': '扫描关闭期间新增的 Agent 不可用，打开扫描后生效。',
   Capabilities: '能力',
   'Shared capabilities': '共享能力',
   'Add capability': '添加能力',

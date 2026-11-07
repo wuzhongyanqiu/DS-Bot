@@ -168,6 +168,8 @@ var ZH = {
   "Not connected": "未连接",
   Disabled: "已停用",
   "Disabled. Turn scanning on to use it again.": "已停用，打开扫描恢复。",
+  "Nothing to refresh while scanning is off.": "扫描关闭时没有可刷新的内容。",
+  "An agent added while scanning is off is unavailable until scanning is on.": "扫描关闭期间新增的 Agent 不可用，打开扫描后生效。",
   Capabilities: "能力",
   "Shared capabilities": "共享能力",
   "Add capability": "添加能力",
@@ -22997,7 +22999,13 @@ function LocalAgentsPage({ run: run2, Section: Section2, Row: Row4, Switch: Swit
       (0, import_react53.createElement)(
         Row4,
         { key: "refresh", label: t("Refresh"), hint: t("Scan again for agent CLIs.") },
-        (0, import_react53.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: refresh }, (0, import_react53.createElement)(CheckIcon))
+        (0, import_react53.createElement)("button", {
+          type: "button",
+          className: "bt-soft bt-soft-sm",
+          disabled: scanningOff,
+          title: scanningOff ? t("Nothing to refresh while scanning is off.") : t("Scan again for agent CLIs."),
+          onClick: refresh
+        }, (0, import_react53.createElement)(CheckIcon))
       )
     ),
     (0, import_react53.createElement)(
@@ -23021,7 +23029,11 @@ function LocalAgentsPage({ run: run2, Section: Section2, Row: Row4, Switch: Swit
       )),
       editing === "new" ? (0, import_react53.createElement)(AgentForm, { key: "new", close: () => setEditing(null), submit: (payload) => call("local-agent-add", payload).then(() => load("local-agents")) }) : (0, import_react53.createElement)(
         Row4,
-        { key: "add", label: t("Add agent") },
+        {
+          key: "add",
+          label: t("Add agent"),
+          hint: scanningOff ? t("An agent added while scanning is off is unavailable until scanning is on.") : void 0
+        },
         (0, import_react53.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", "aria-label": t("Add agent"), onClick: () => setEditing("new") }, (0, import_react53.createElement)(PlusIcon))
       )
     )

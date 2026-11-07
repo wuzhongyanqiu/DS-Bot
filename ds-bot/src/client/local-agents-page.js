@@ -51,7 +51,10 @@ export function LocalAgentsPage({ run, Section, Row, Switch }) {
           agent.signIn ? h('button', { type: 'button', className: 'bt-soft bt-soft-sm', title: t('Copies the sign-in command'), onClick: () => navigator.clipboard?.writeText(agent.signIn).catch(() => {}) }, t('Sign in')) : null,
           h('span', { className: 'bt-tag' }, agent.path ? t('Found') : t('Not found'))))),
       h(Row, { key: 'refresh', label: t('Refresh'), hint: t('Scan again for agent CLIs.') },
-        h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: refresh }, h(CheckIcon)))),
+        h('button', {
+          type: 'button', className: 'bt-soft bt-soft-sm', disabled: scanningOff,
+          title: scanningOff ? t('Nothing to refresh while scanning is off.') : t('Scan again for agent CLIs.'), onClick: refresh,
+        }, h(CheckIcon)))),
     h(Section, { key: 'custom', title: t('Custom agents') },
       h('p', { className: 'bt-set-hint' }, t('ACP-compatible agents, added by command.')),
       view.custom.map(agent => (editing === agent
@@ -66,7 +69,10 @@ export function LocalAgentsPage({ run, Section, Row, Switch }) {
             h('button', { type: 'button', className: 'bt-soft bt-soft-sm bt-danger', 'aria-label': t('Remove'), onClick: () => run(call('local-agent-remove', { id: agent.id })).then(() => load('local-agents')) }, h(TrashIcon)))))),
       editing === 'new'
         ? h(AgentForm, { key: 'new', close: () => setEditing(null), submit: payload => call('local-agent-add', payload).then(() => load('local-agents')) })
-        : h(Row, { key: 'add', label: t('Add agent') },
+        : h(Row, {
+          key: 'add', label: t('Add agent'),
+          hint: scanningOff ? t('An agent added while scanning is off is unavailable until scanning is on.') : undefined,
+        },
           h('button', { type: 'button', className: 'bt-soft bt-soft-sm', 'aria-label': t('Add agent'), onClick: () => setEditing('new') }, h(PlusIcon)))),
   ]
 }
