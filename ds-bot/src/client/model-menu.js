@@ -6,6 +6,7 @@ import { BotMark } from './mark.js'
 import { KeyIcon, MaskedInput } from './secret-card.js'
 import { SPRING_POP, SPRING_SHAPE, SPRING_TAP, spring, stepMenuFocus, useLinger, useViewport, viewBottom } from './motion.js'
 import { hostText, t } from './i18n.js'
+import { modelsForBot } from './agent-routes.js'
 
 const MENU_EXIT_MS = 120
 
@@ -191,15 +192,15 @@ export function EffortBar({ reasoning, current, onPick }) {
     h('span', { className: 'bt-effort-knob', 'aria-hidden': true })))
 }
 
-function ModelRows({ roster, current, onPick }) {
-  return groupModels(roster.models).map(([provider, list]) => h(Fragment, { key: list[0].provider ?? provider },
+function ModelRows({ models, current, defaultModel, onPick }) {
+  return groupModels(models).map(([provider, list]) => h(Fragment, { key: list[0].provider ?? provider },
     h('div', { className: 'bt-model-group', role: 'presentation' }, provider),
     list.map(model => h('button', {
       key: model.ref, type: 'button', role: 'menuitemradio', 'aria-checked': model.ref === current, title: model.ref,
       onClick: () => onPick(model.ref),
     },
     h('span', { className: 'bt-menu-label' }, model.name),
-    model.ref === roster.defaultModel ? h('span', { className: 'bt-menu-hint' }, t('Default')) : null,
+    model.ref === defaultModel ? h('span', { className: 'bt-menu-hint' }, t('Default')) : null,
     h('span', { className: 'bt-model-tick', 'aria-hidden': true }, model.ref === current ? h(CheckIcon) : null)))))
 }
 
@@ -282,24 +283,25 @@ export function ModelMenu({ bot, roster, actions, run, wide = false, onPick, onP
     if (onPickEffort) onPickEffort(effort)
     else if (effort !== bot.effort) void run(actions.updateBot(bot.id, { effort: effort ?? null }))
   }
-  const models = roster.models ?? []
+  const allModels = roster.models ?? []
+  const models = modelsForBot(allModels, bot)
   const manage = manageModels(actions)
   const hasEfforts = withEfforts && effortStops(reasoning).length > 0
   return h(Fragment, null,
     h('button', {
       ref: button, type: 'button', className: 'bt-model-trigger', 'data-wide': wide || undefined,
       'aria-haspopup': 'menu', 'aria-expanded': isOpen, 'aria-label': t('Model: {model}', { model: shown?.name ?? t('none') }),
-      'data-missing': shown !== undefined && !shown.served && models.length > 0 ? '' : undefined, onClick: toggle,
+      'data-missing': shown !== undefined && !shown.served && allModels.length > 0 ? '' : undefined, onClick: toggle,
     },
     h('span', { className: 'bt-model-copy' },
       h('span', { className: 'bt-model-name' }, shown?.name ?? t('Choose a model')),
-      shown ? h('span', { className: 'bt-model-provider' }, shown.served || models.length === 0
+      shown ? h('span', { className: 'bt-model-provider' }, shown.served || allModels.length === 0
         ? (!withEfforts || effortLabel === undefined ? shown.provider : `${shown.provider} · ${effortLabel}`)
         : t('{provider} · not available', { provider: shown.provider })) : null),
     h(Caret)),
     shownPlace ? createPortal(h('div', { ref: menu, className: `bt-menu bt-model-menu${shownPlace.bottom !== undefined ? ' bt-menu-up' : ''}`, role: 'menu', 'aria-label': t('Model for {name}', { name: bot.name }), style: shownPlace, 'data-leaving': leaving || undefined },
       h('div', { className: 'bt-model-scroll' },
-        models.length > 0 ? h(ModelRows, { roster, current, onPick: pick })
+        models.length > 0 ? h(ModelRows, { models, current, defaultModel: roster.defaultModel, onPick: pick })
           : h('div', { className: 'bt-model-none' }, t('No models are set up in DeepSeek Harness yet.'))),
       hasEfforts || manage ? h('div', { className: 'bt-model-foot' },
         hasEfforts ? h(EffortBar, { reasoning, current: picked, onPick: pickEffort }) : null,
@@ -317,12 +319,13 @@ export function ModelChoiceDock({ sessionId, useRoster, actions }) {
   const shown = Boolean(bot) && currentPart(bot) === sessionId && roster.ready
   useEffect(() => { if (shown) void actions.refreshModels?.() }, [shown, sessionId])
   if (!bot || currentPart(bot) !== sessionId || !roster.ready) return null
-  const models = roster.models ?? []
+  const allModels = roster.models ?? []
+  const models = modelsForBot(allModels, bot)
   // A model whose provider has no API key fails every turn, so it is no choice.
   const usable = models.filter(model => !model.needsKey)
-  const lost = bot.model ? !models.some(model => model.ref === bot.model) : false
+  const lost = bot.model ? !allModels.some(model => model.ref === bot.model) : false
   // An unknown catalog (none listed) cannot tell a lost model from a slow provider.
-  if (bot.model && (!lost || models.length === 0)) return null
+  if (bot.model && (!lost || allModels.length === 0)) return null
   // The missing key is taken here, through the host.
   const keyFor = usable.length === 0 && actions.setProviderKey ? models.find(model => model.needsKey) : undefined
   const manage = manageModels(actions)

@@ -26,18 +26,22 @@ function AgentForm({ initial, submit, close }) {
       h('button', { type: 'button', className: 'bt-soft', onClick: close }, t('Cancel'))))
 }
 
-export function LocalAgentsPage({ run, Section, Row }) {
+export function LocalAgentsPage({ run, Section, Row, Switch }) {
   const [view, setView] = useState(null)
   const [editing, setEditing] = useState(null) // 'new' | agent object
   // run() reports a failure and resolves to whether it worked, so the page's
   // data is taken from the call itself.
   const load = endpoint => run(call(endpoint).then(setView))
   const refresh = () => load('local-agent-refresh')
+  const setScanning = enabled => { void run(call('local-agent-scan', { enabled }).then(setView)) }
   useEffect(() => { void load('local-agents') }, [])
   if (view === null) return null
+  const scanningOff = view.scanning === false
   if (view.available === false) return h('p', { className: 'bt-set-hint' }, t('This DSH cannot register local agent routes.'))
   return [
     h(Section, { key: 'found', title: t('Detected agents') },
+      h(Row, { key: 'scan', label: t('Scan local Agent CLIs'), hint: t('Off, their routes are withdrawn from every model menu.') },
+        Switch ? h(Switch, { label: t('Scan local Agent CLIs'), on: view.scanning !== false, onChange: setScanning }) : null),
       view.detected.length === 0 ? h(Row, { label: t('No agent CLIs found') }) : null,
       view.detected.map(agent => h(Row, {
         key: agent.route, label: agent.name,
@@ -47,18 +51,28 @@ export function LocalAgentsPage({ run, Section, Row }) {
           agent.signIn ? h('button', { type: 'button', className: 'bt-soft bt-soft-sm', title: t('Copies the sign-in command'), onClick: () => navigator.clipboard?.writeText(agent.signIn).catch(() => {}) }, t('Sign in')) : null,
           h('span', { className: 'bt-tag' }, agent.path ? t('Found') : t('Not found'))))),
       h(Row, { key: 'refresh', label: t('Refresh'), hint: t('Scan again for agent CLIs.') },
-        h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: refresh }, h(CheckIcon)))),
+        h('button', {
+          type: 'button', className: 'bt-soft bt-soft-sm', disabled: scanningOff,
+          title: scanningOff ? t('Nothing to refresh while scanning is off.') : t('Scan again for agent CLIs.'), onClick: refresh,
+        }, h(CheckIcon)))),
     h(Section, { key: 'custom', title: t('Custom agents') },
       h('p', { className: 'bt-set-hint' }, t('ACP-compatible agents, added by command.')),
       view.custom.map(agent => (editing === agent
         ? h(AgentForm, { key: agent.id, initial: agent, close: () => setEditing(null), submit: payload => call('local-agent-update', { id: agent.id, ...payload }).then(() => load('local-agents')) })
-        : h(Row, { key: agent.id, label: agent.name, hint: [agent.command, ...(agent.args ?? [])].join(' ') },
+        : h(Row, {
+          key: agent.id, label: agent.name,
+          hint: [[agent.command, ...(agent.args ?? [])].join(' '), scanningOff ? t('Disabled. Turn scanning on to use it again.') : null].filter(Boolean).join(' · '),
+        },
           h('div', { className: 'bt-set-actions' },
+            scanningOff ? h('span', { className: 'bt-tag' }, t('Disabled')) : null,
             h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: () => setEditing(agent) }, h(ChevronRightIcon)),
             h('button', { type: 'button', className: 'bt-soft bt-soft-sm bt-danger', 'aria-label': t('Remove'), onClick: () => run(call('local-agent-remove', { id: agent.id })).then(() => load('local-agents')) }, h(TrashIcon)))))),
       editing === 'new'
         ? h(AgentForm, { key: 'new', close: () => setEditing(null), submit: payload => call('local-agent-add', payload).then(() => load('local-agents')) })
-        : h(Row, { key: 'add', label: t('Add agent') },
+        : h(Row, {
+          key: 'add', label: t('Add agent'),
+          hint: scanningOff ? t('An agent added while scanning is off is unavailable until scanning is on.') : undefined,
+        },
           h('button', { type: 'button', className: 'bt-soft bt-soft-sm', 'aria-label': t('Add agent'), onClick: () => setEditing('new') }, h(PlusIcon)))),
   ]
 }

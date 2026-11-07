@@ -10,7 +10,7 @@ import { CodexEngine } from '../src/host/local-agents/codex.js'
 import { JsonRpcPeer } from '../src/host/local-agents/jsonrpc.js'
 import { ClaudeEngine } from '../src/host/local-agents/claude.js'
 import { LoopbackMcp, flattenSchema } from '../src/host/local-agents/mcp.js'
-import { cleanEnv } from '../src/host/local-agents/discover.js'
+import { cleanEnv, searchPath } from '../src/host/local-agents/discover.js'
 import { validateCustom, isLocalAgentRoute, cliMode } from '../src/host/local-agents/engines.js'
 import { install as partsInstall } from '../src/host/parts.js'
 import { fakeContext } from './fake-ctx.js'
@@ -173,7 +173,10 @@ test('env sanitization drops agent and key variables', () => {
   assert.equal(env.OPENAI_API_KEY, undefined)
   assert.equal(env.DS_BOT_HOME, undefined)
   assert.equal(env.EXTRA, '1')
-  assert.equal(env.PATH, process.env.PATH)
+  // The child PATH keeps the process PATH and adds the folders the scan found,
+  // so a CLI started through `env node` works from a Dock launch too.
+  assert.equal(env.PATH, searchPath())
+  for (const dir of process.env.PATH.split(':')) if (dir !== '') assert.ok(env.PATH.split(':').includes(dir), dir)
 })
 
 test('custom agent validation', () => {

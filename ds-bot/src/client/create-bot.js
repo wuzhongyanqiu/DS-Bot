@@ -7,6 +7,7 @@ import { ChevronLeftIcon, CloseIcon } from './icons.js'
 import { useEscape } from './overlay-hooks.js'
 import { createPayload, freshBotName, startModel } from './bot-draft.js'
 import { ModelMenu } from './model-menu.js'
+import { modelsForBot } from './agent-routes.js'
 import { hostText, t } from './i18n.js'
 import { nameProblem } from '../shared/mentions.js'
 
@@ -90,7 +91,7 @@ export function CreateBot({ roster, actions, start, brief = '', onBack, canGoBac
       h(ModelMenu, { bot: { id: 'new-bot', name: finalName, model: model || undefined, effort }, roster, actions, wide: true, onPick: ref => { setModel(ref); setEffort(undefined) }, onPickEffort: picked => setEffort(picked ?? null) }),
       h('span', { className: 'bt-note' }, model
         ? t('The Bot runs on this model. You can change it later in its details.')
-        : (roster.models ?? []).length > 0
+        : modelsForBot(roster.models, {}).length > 0
           ? t('Pick a model here, or the Bot asks for one in its chat.')
           : t('Add a provider and a model in DeepSeek Harness first, or pick one in the Bot\'s chat later.'))),
     error ? h('div', { className: 'bt-error', role: 'alert', style: { padding: 0 } }, error) : null,

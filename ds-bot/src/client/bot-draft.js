@@ -12,7 +12,7 @@ export function freshBotName(roster, base = 'New Bot') {
 // The form starts on the team default model from settings when it is served, then
 // the DSH default, else the first one.
 export function startModel(roster) {
-  const usable = (roster.models ?? []).filter(model => model.needsKey !== true)
+  const usable = (roster.models ?? []).filter(model => model.needsKey !== true && !isLocalRoute(model.ref))
   return (usable.find(model => model.ref === roster.prefs?.defaultBotModel) ?? usable.find(model => model.ref === roster.defaultModel) ?? usable[0])?.ref ?? ''
 }
 
