@@ -632,25 +632,37 @@ const textOf = (node) => {
   return textOf(node.props?.children)
 }
 
-test('with Bot chats off the sidebar lists groups and Agents but no Bot row or tile', () => {
+test('with Bot chats off the sidebar keeps the Main Bot tile but hides the other Bot rows', () => {
   const roster = teamFrom(
     [{ id: 'chief', name: 'Chief', createdAt: 1 }, { id: 'writer', name: 'Writer', createdAt: 2 }],
     [{ id: 'room', name: 'Team', members: [], createdAt: 3 }],
     [{ id: 'agent', sessions: ['agent-session'], createdAt: 4 }],
   )
   const { rows, hints } = sidebarWith(roster)
-  assert.deepEqual(rows.map(row => row.type.name), ['AgentRow', 'RoomRow'])
-  assert.deepEqual(rows.filter(row => row.type.name !== 'AgentRow').map(row => row.props.room.id), ['room'])
+  assert.deepEqual(rows.map(row => row.type.name), ['BotRow', 'AgentRow', 'RoomRow'])
+  assert.deepEqual(rows.filter(row => row.type.name === 'BotRow').map(row => row.props.bot.id), ['chief'])
+  assert.deepEqual(rows.filter(row => row.type.name === 'RoomRow').map(row => row.props.room.id), ['room'])
   assert.equal(hints.length, 0)
 })
 
-test('with Bot chats off the rail shows no Bot avatar either', () => {
+test('with Bot chats off the rail keeps the Main Bot avatar but hides the other Bots', () => {
   const roster = teamFrom(
     [{ id: 'chief', name: 'Chief', createdAt: 1 }, { id: 'writer', name: 'Writer', createdAt: 2 }],
     [{ id: 'room', name: 'Team', members: [], createdAt: 3 }],
   )
   const { rows } = sidebarWith(roster, { pref: 'rail' })
-  assert.deepEqual(rows.map(row => row.type.name), ['RoomRow'])
+  assert.deepEqual(rows.map(row => row.type.name), ['BotRow', 'RoomRow'])
+  assert.deepEqual(rows.filter(row => row.type.name === 'BotRow').map(row => row.props.bot.id), ['chief'])
+})
+
+test('the Main Bot stays in the list whether Bot chats are off or on', () => {
+  const roster = teamFrom(
+    [{ id: 'chief', name: 'Chief', createdAt: 1 }, { id: 'writer', name: 'Writer', createdAt: 2 }],
+    [{ id: 'room', name: 'Team', members: [], createdAt: 3 }],
+  )
+  const mainTiles = rows => rows.filter(row => row.type.name === 'BotRow' && row.props.bot.id === 'chief').length
+  assert.equal(mainTiles(sidebarWith(roster).rows), 1)
+  assert.equal(mainTiles(sidebarWith({ ...roster, prefs: { showBots: true } }).rows), 1)
 })
 
 test('with Bot chats on every Bot returns, Main Bot tile first', () => {
@@ -665,17 +677,17 @@ test('with Bot chats on every Bot returns, Main Bot tile first', () => {
   assert.deepEqual(rows.filter(row => row.type.name === 'BotRow').map(row => row.props.bot.id), ['chief', 'writer'])
 })
 
-test('an empty list says how to start instead of going blank', () => {
-  const roster = teamFrom([{ id: 'chief', name: 'Chief', createdAt: 1 }], [])
+test('a team without a Main Bot gets the hint instead of a blank list', () => {
+  const roster = teamFrom([], [])
   const { rows, hints } = sidebarWith(roster)
   assert.deepEqual(rows, [])
   assert.equal(hints.length, 1)
   assert.match(textOf(hints[0]), /No group chats yet/)
 })
 
-test('an empty list with an Agent row needs no hint', () => {
+test('the Main Bot tile and an Agent row need no hint', () => {
   const roster = teamFrom([{ id: 'chief', name: 'Chief', createdAt: 1 }], [], [{ id: 'agent', sessions: ['agent-session'], createdAt: 2 }])
   const { rows, hints } = sidebarWith(roster)
-  assert.deepEqual(rows.map(row => row.type.name), ['AgentRow'])
+  assert.deepEqual(rows.map(row => row.type.name), ['BotRow', 'AgentRow'])
   assert.equal(hints.length, 0)
 })
