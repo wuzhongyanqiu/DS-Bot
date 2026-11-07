@@ -124,6 +124,27 @@ test('apply registers listeners and effects in a fixed order', (t) => {
   ])
 })
 
+test('a group chat in front releases the focused Bot chat', async (t) => {
+  const { call, stop } = start({
+    version: 1,
+    mainBotIds: ['m1'],
+    revision: 1,
+    bots: { m1: { id: 'm1', name: 'Chief', role: 'Chief of Staff', instructions: '', createdAt: 1 } },
+    rooms: { 'room-1': { id: 'room-1', name: 'Group', members: ['m1'], admin: 'm1', mode: 'admin', createdAt: 2 } },
+    exchanges: [],
+    exchangeTurns: {},
+    questions: {},
+  })
+  t.after(stop)
+  const focused = () => rt.capabilityFocusedSession()
+  assert.equal((await call('visible-session', { sessionId: 'm1' })).value, true)
+  assert.equal(focused(), 'm1')
+  // The group's own Session is known but not a Bot chat: it releases the focus.
+  assert.equal((await call('visible-session', { sessionId: 'room-1' })).value, true)
+  assert.equal(focused(), undefined)
+  assert.deepEqual((await call('visible-session', { sessionId: 'not-a-session' })).error, { code: 'bot/not-found', message: 'Unknown session', details: {} })
+})
+
 test('the client channel answers from the saved state', async (t) => {
   const { call, stop } = start({
     version: 1,

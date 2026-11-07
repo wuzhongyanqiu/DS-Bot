@@ -68,7 +68,7 @@ Options go in the profile's `cordis.patch.yml`, under the `bot` entry. All of th
     workspace: /path/to/workspace   # where the Bots work; default <home>/workspace
     home: /path/to/bot-data         # where the team is saved; default $DSH_HOME/bot
     checkRatio: 0.8                 # share of the model's usable window where the steward decides
-    idleCapabilityMs: 600000        # dispose idle Sessions' MCP servers after this; the open Session stays; default ten minutes
+    idleCapabilityMs: 600000        # dispose idle Sessions' MCP servers after this; the open Session stays; 0 = as soon as idle; default ten minutes
     browser: true                   # force the Bot browser on or off; default on in Desktop and the desktop app only
     memory: true                    # false turns memory off: no memory tools, section or panel
     memoryReview: true              # false leaves memory to the Bots' own remember calls

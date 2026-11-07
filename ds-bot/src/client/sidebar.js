@@ -16,6 +16,7 @@ import { showsDshRow } from './dsh-offer.js'
 import { quietly } from './diagnostics.js'
 import { frameLayout, dragColumn, RAIL_WIDTH, FALLBACK_SIDEBAR_WIDTH, userSidebarToggle } from './frame-layout.js'
 import { chatRoom, dshCollapsed } from './frame-watch.js'
+import { botSessionOf } from './focus-session.js'
 
 // -------------------------------------------------------------------------
 // Sidebar
@@ -1030,7 +1031,8 @@ function useLandOnMainBot(roster, useSessions, actions) {
   const visible = mainView.split('|')[0]
   useEffect(() => {
     if (!roster.ready) return undefined
-    const id = visible === '' ? null : visible
+    // A group chat or Agent Session in front releases the Bot chat, not keeps it.
+    const id = botSessionOf(roster, visible)
     const report = () => focusSession.current?.(id)
     report()
     const onVisibility = () => focusSession.current?.(document.hidden ? null : id)

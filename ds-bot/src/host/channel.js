@@ -635,7 +635,15 @@ export function install(rt) {
             return ok(true)
           }
           const sessionId = String(body.sessionId)
-          if (!rt.isBotSession(sessionId)) return fail('Unknown session', 'bot/not-found')
+          if (!rt.isBotSession(sessionId)) {
+            // A known group chat or Agent Session in front releases the Bot chat that
+            // was kept warm; an id the host does not know stays an error.
+            const agentSession = Object.values(rt.state.agents ?? {})
+              .some(agent => (agent.sessions ?? []).includes(sessionId))
+            if (rt.roomOf?.(sessionId) === undefined && !agentSession) return fail('Unknown session', 'bot/not-found')
+            await rt.focusSession?.(undefined)
+            return ok(true)
+          }
           await rt.focusSession?.(sessionId)
           return ok(true)
         }

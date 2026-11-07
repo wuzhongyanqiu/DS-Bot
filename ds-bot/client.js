@@ -14643,6 +14643,13 @@ function installFrameWatch(frame) {
   };
 }
 
+// src/client/focus-session.js
+function botSessionOf(roster, sessionId) {
+  if (typeof sessionId !== "string" || sessionId === "") return null;
+  const known = (roster?.bots ?? []).find((bot) => bot.id === sessionId || bot.sessionId === sessionId || (bot.parts ?? []).includes(sessionId));
+  return known === void 0 ? null : sessionId;
+}
+
 // src/client/sidebar.js
 var import_react33 = require("react");
 var import_react_dom5 = require("react-dom");
@@ -15697,7 +15704,7 @@ function useLandOnMainBot(roster, useSessions, actions) {
   const visible = mainView.split("|")[0];
   (0, import_react33.useEffect)(() => {
     if (!roster.ready) return void 0;
-    const id = visible === "" ? null : visible;
+    const id = botSessionOf(roster, visible);
     const report = () => focusSession.current?.(id);
     report();
     const onVisibility = () => focusSession.current?.(document.hidden ? null : id);
