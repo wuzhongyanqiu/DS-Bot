@@ -652,7 +652,7 @@ var ZH = {
   "Text width": "正文宽度",
   "Show thinking": "显示思考过程",
   "Show Bot chats": "显示 Bot 会话",
-  "Show each Bot in the sidebar. Off, the sidebar lists group chats only; open a Bot from a group, search, or @.": "在侧栏显示每个 Bot。关闭时侧栏只列出群聊；从群成员、搜索或 @ 进入 Bot 对话。",
+  "Show each Bot in the sidebar. Off, the Main Bot and group chats stay; open another Bot from a group, search, or @.": "在侧栏显示每个 Bot。关闭时保留主 Bot 和群聊；从群成员、搜索或 @ 进入其他 Bot 对话。",
   "No group chats yet. Create a group chat, or turn on Show Bot chats in Settings.": "还没有群聊。新建一个群聊，或在设置里打开「显示 Bot 会话」。",
   "Enter sends message": "回车发送消息",
   "Bots · {count}": "Bot · {count}",
@@ -14997,8 +14997,8 @@ function TeamSidebar(props) {
     ];
     return entries2.sort((a, b) => Number(Boolean(b.item.pinned)) - Number(Boolean(a.item.pinned)) || b.at - a.at);
   }, [roster, updated, showBots]);
-  const main = showBots ? roster.byId[roster.mainBotId] : void 0;
-  const emptyList = wideContent && !showBots && roster.ready && order.length === 0;
+  const main = roster.byId[roster.mainBotId];
+  const emptyList = wideContent && roster.ready && !main && order.length === 0;
   useListGlide(listRef, wideContent, order.map((entry) => entry.item.id).join(","));
   useLandOnMainBot(roster, useSessions, actions);
   useReportReady(roster.ready, roster);
@@ -23123,7 +23123,7 @@ function GeneralPage({ roster, actions, run: run2 }) {
       (0, import_react54.createElement)(SetRow, { label: t("Show thinking") }, (0, import_react54.createElement)(Switch, { label: t("Show thinking"), on: thinkingShown(prefs), onChange: (thinking) => run2(actions.setPrefs({ thinking })) })),
       (0, import_react54.createElement)(
         SetRow,
-        { label: t("Show Bot chats"), hint: t("Show each Bot in the sidebar. Off, the sidebar lists group chats only; open a Bot from a group, search, or @.") },
+        { label: t("Show Bot chats"), hint: t("Show each Bot in the sidebar. Off, the Main Bot and group chats stay; open another Bot from a group, search, or @.") },
         (0, import_react54.createElement)(Switch, { label: t("Show Bot chats"), on: prefs.showBots === true, onChange: (showBots) => run2(actions.setPrefs({ showBots })) })
       )
     ),

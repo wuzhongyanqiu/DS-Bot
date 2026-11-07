@@ -335,9 +335,10 @@ export function TeamSidebar(props) {
     for (const id of list.ids) stamps[id] = list.byId[id]?.updatedAt ?? 0
     return JSON.stringify(stamps)
   })
-  // Bots stay out of the list until the user turns them on in Settings → General. A
-  // Bot's chat is then reached from a group's members, search, or @; Agent rows are
-  // not group members and keep their place.
+  // Other Bots stay out of the list until the user turns them on in Settings → General;
+  // their chats are reached from a group's members, search, or @. The Main Bot is the
+  // team's standing entry and shows either way. Agent rows are not group members and
+  // keep their place.
   const showBots = roster.prefs?.showBots === true
   const order = useMemo(() => {
     const stamps = JSON.parse(updated)
@@ -349,8 +350,9 @@ export function TeamSidebar(props) {
     ]
     return entries.sort((a, b) => Number(Boolean(b.item.pinned)) - Number(Boolean(a.item.pinned)) || b.at - a.at)
   }, [roster, updated, showBots])
-  const main = showBots ? roster.byId[roster.mainBotId] : undefined
-  const emptyList = wideContent && !showBots && roster.ready && order.length === 0
+  const main = roster.byId[roster.mainBotId]
+  // The Main Bot's tile already fills the list; the hint is for a team without one.
+  const emptyList = wideContent && roster.ready && !main && order.length === 0
   useListGlide(listRef, wideContent, order.map(entry => entry.item.id).join(','))
   useLandOnMainBot(roster, useSessions, actions)
   useReportReady(roster.ready, roster)

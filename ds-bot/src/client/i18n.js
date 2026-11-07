@@ -592,7 +592,7 @@ const ZH = {
   'Text width': '正文宽度',
   'Show thinking': '显示思考过程',
   'Show Bot chats': '显示 Bot 会话',
-  'Show each Bot in the sidebar. Off, the sidebar lists group chats only; open a Bot from a group, search, or @.': '在侧栏显示每个 Bot。关闭时侧栏只列出群聊；从群成员、搜索或 @ 进入 Bot 对话。',
+  'Show each Bot in the sidebar. Off, the Main Bot and group chats stay; open another Bot from a group, search, or @.': '在侧栏显示每个 Bot。关闭时保留主 Bot 和群聊；从群成员、搜索或 @ 进入其他 Bot 对话。',
   'No group chats yet. Create a group chat, or turn on Show Bot chats in Settings.': '还没有群聊。新建一个群聊，或在设置里打开「显示 Bot 会话」。',
   'Enter sends message': '回车发送消息',
   'Bots · {count}': 'Bot · {count}',
