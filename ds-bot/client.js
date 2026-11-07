@@ -167,6 +167,7 @@ var ZH = {
   "Remove?": "确认移除？",
   "Not connected": "未连接",
   Disabled: "已停用",
+  "Disabled. Turn scanning on to use it again.": "已停用，打开扫描恢复。",
   Capabilities: "能力",
   "Shared capabilities": "共享能力",
   "Add capability": "添加能力",
@@ -22966,6 +22967,7 @@ function LocalAgentsPage({ run: run2, Section: Section2, Row: Row4, Switch: Swit
     void load("local-agents");
   }, []);
   if (view === null) return null;
+  const scanningOff = view.scanning === false;
   if (view.available === false) return (0, import_react53.createElement)("p", { className: "bt-set-hint" }, t("This DSH cannot register local agent routes."));
   return [
     (0, import_react53.createElement)(
@@ -23004,10 +23006,15 @@ function LocalAgentsPage({ run: run2, Section: Section2, Row: Row4, Switch: Swit
       (0, import_react53.createElement)("p", { className: "bt-set-hint" }, t("ACP-compatible agents, added by command.")),
       view.custom.map((agent) => editing === agent ? (0, import_react53.createElement)(AgentForm, { key: agent.id, initial: agent, close: () => setEditing(null), submit: (payload) => call("local-agent-update", { id: agent.id, ...payload }).then(() => load("local-agents")) }) : (0, import_react53.createElement)(
         Row4,
-        { key: agent.id, label: agent.name, hint: [agent.command, ...agent.args ?? []].join(" ") },
+        {
+          key: agent.id,
+          label: agent.name,
+          hint: [[agent.command, ...agent.args ?? []].join(" "), scanningOff ? t("Disabled. Turn scanning on to use it again.") : null].filter(Boolean).join(" · ")
+        },
         (0, import_react53.createElement)(
           "div",
           { className: "bt-set-actions" },
+          scanningOff ? (0, import_react53.createElement)("span", { className: "bt-tag" }, t("Disabled")) : null,
           (0, import_react53.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: () => setEditing(agent) }, (0, import_react53.createElement)(ChevronRightIcon)),
           (0, import_react53.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm bt-danger", "aria-label": t("Remove"), onClick: () => run2(call("local-agent-remove", { id: agent.id })).then(() => load("local-agents")) }, (0, import_react53.createElement)(TrashIcon))
         )

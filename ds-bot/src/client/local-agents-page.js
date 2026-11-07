@@ -36,6 +36,7 @@ export function LocalAgentsPage({ run, Section, Row, Switch }) {
   const setScanning = enabled => { void run(call('local-agent-scan', { enabled }).then(setView)) }
   useEffect(() => { void load('local-agents') }, [])
   if (view === null) return null
+  const scanningOff = view.scanning === false
   if (view.available === false) return h('p', { className: 'bt-set-hint' }, t('This DSH cannot register local agent routes.'))
   return [
     h(Section, { key: 'found', title: t('Detected agents') },
@@ -55,8 +56,12 @@ export function LocalAgentsPage({ run, Section, Row, Switch }) {
       h('p', { className: 'bt-set-hint' }, t('ACP-compatible agents, added by command.')),
       view.custom.map(agent => (editing === agent
         ? h(AgentForm, { key: agent.id, initial: agent, close: () => setEditing(null), submit: payload => call('local-agent-update', { id: agent.id, ...payload }).then(() => load('local-agents')) })
-        : h(Row, { key: agent.id, label: agent.name, hint: [agent.command, ...(agent.args ?? [])].join(' ') },
+        : h(Row, {
+          key: agent.id, label: agent.name,
+          hint: [[agent.command, ...(agent.args ?? [])].join(' '), scanningOff ? t('Disabled. Turn scanning on to use it again.') : null].filter(Boolean).join(' · '),
+        },
           h('div', { className: 'bt-set-actions' },
+            scanningOff ? h('span', { className: 'bt-tag' }, t('Disabled')) : null,
             h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: () => setEditing(agent) }, h(ChevronRightIcon)),
             h('button', { type: 'button', className: 'bt-soft bt-soft-sm bt-danger', 'aria-label': t('Remove'), onClick: () => run(call('local-agent-remove', { id: agent.id })).then(() => load('local-agents')) }, h(TrashIcon)))))),
       editing === 'new'

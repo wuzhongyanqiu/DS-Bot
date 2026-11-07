@@ -131,6 +131,7 @@ const ZH = {
   'Remove?': '确认移除？',
   'Not connected': '未连接',
   Disabled: '已停用',
+  'Disabled. Turn scanning on to use it again.': '已停用，打开扫描恢复。',
   Capabilities: '能力',
   'Shared capabilities': '共享能力',
   'Add capability': '添加能力',
