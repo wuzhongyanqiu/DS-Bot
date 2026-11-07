@@ -152,6 +152,10 @@ test('the client channel answers from the saved state', async (t) => {
   assert.deepEqual((await call('exchange', { a: 'b2', b: 'm1' })).value.map(entry => entry.id), ['x'])
   assert.deepEqual(await call('room-progress', { roomId: 'r' }), { ok: true, value: [] })
   assert.deepEqual(await call('send', { text: ' ' }), { ok: false, error: { code: 'bot/invalid', message: 'Nothing to send', details: {} } })
+  // Which Session is in front: a team Session is accepted, anything else is not.
+  assert.equal((await call('visible-session', { sessionId: 'm1' })).value, true)
+  assert.equal((await call('visible-session', { sessionId: null })).value, true)
+  assert.deepEqual((await call('visible-session', { sessionId: 'not-a-session' })).error, { code: 'bot/not-found', message: 'Unknown session', details: {} })
   assert.deepEqual(await call('nope'), { ok: false, error: { code: 'bot/not-found', message: 'Unknown endpoint nope', details: {} } })
   assert.deepEqual(await call('set-prefs', { accent: 'red' }), { ok: false, error: { code: 'bot/invalid', message: 'Accent must be a #rrggbb color', details: {} } })
   // The motion level is kept unless it is the default, and only the three levels pass.

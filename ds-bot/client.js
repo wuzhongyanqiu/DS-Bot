@@ -2020,6 +2020,12 @@ function teamActions({ call: call2, after, partFor, roster, ui: ui2, live, cards
       ui2.set((state) => ({ ...state, details: id, view: "details", renaming: true, tab: null, panelYield: yieldTo(state, "details") }));
     },
     openSettings,
+    // The Session on screen, for the host's capability mounts. No state refresh:
+    // this follows every view change, including the composer taking focus.
+    focusSession: (sessionId) => {
+      void call2("visible-session", { sessionId: sessionId ?? null }).catch(() => {
+      });
+    },
     // DS Bot's own Models page: the providers DSH serves, their keys and models.
     openModels: () => openSettings("models"),
     closeSettings: () => {
@@ -15686,6 +15692,28 @@ function useLandOnMainBot(roster, useSessions, actions) {
     return row ? `${row.id}|${row.blank ? 1 : 0}` : "";
   });
   const lastBot = (0, import_react33.useRef)(null);
+  const focusSession = (0, import_react33.useRef)(actions.focusSession);
+  focusSession.current = actions.focusSession;
+  const visible = mainView.split("|")[0];
+  (0, import_react33.useEffect)(() => {
+    if (!roster.ready) return void 0;
+    const id = visible === "" ? null : visible;
+    const report = () => focusSession.current?.(id);
+    report();
+    const onVisibility = () => focusSession.current?.(document.hidden ? null : id);
+    const onFocusIn = (event) => {
+      if (event.target instanceof Element && event.target.closest('[contenteditable="true"], textarea')) report();
+    };
+    const onPageHide = () => focusSession.current?.(null);
+    document.addEventListener("visibilitychange", onVisibility);
+    document.addEventListener("focusin", onFocusIn);
+    window.addEventListener("pagehide", onPageHide);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      document.removeEventListener("focusin", onFocusIn);
+      window.removeEventListener("pagehide", onPageHide);
+    };
+  }, [visible, roster.ready]);
   (0, import_react33.useEffect)(() => {
     if (!roster.ready || !roster.mainBotId) return void 0;
     const [id, blank3] = mainView.split("|");

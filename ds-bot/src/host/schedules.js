@@ -131,15 +131,11 @@ export function install(rt) {
   async function scheduledSessions() {
     if (service === null) return new Set()
     const ids = new Set()
-    try {
-      for (const entry of await service.catalog()) {
-        // A paused task can be resumed, so its Session stays warm too.
-        if (entry.status !== 'active' && entry.status !== 'paused') continue
-        const sessionId = sessionOf(entry)
-        if (sessionId !== undefined) ids.add(sessionId)
-      }
-    } catch {
-      return new Set()
+    for (const entry of await service.catalog()) {
+      // A paused task can be resumed, so its Session stays warm too.
+      if (entry.status !== 'active' && entry.status !== 'paused') continue
+      const sessionId = sessionOf(entry)
+      if (sessionId !== undefined) ids.add(sessionId)
     }
     return ids
   }

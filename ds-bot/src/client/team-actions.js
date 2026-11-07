@@ -53,6 +53,9 @@ export function teamActions({ call, after, partFor, roster, ui, live, cards, hel
     // Opening the conversation would move focus to its composer and blur the name field.
     renameBot: (id) => { ui.set(state => ({ ...state, details: id, view: 'details', renaming: true, tab: null, panelYield: yieldTo(state, 'details') })) },
     openSettings,
+    // The Session on screen, for the host's capability mounts. No state refresh:
+    // this follows every view change, including the composer taking focus.
+    focusSession: (sessionId) => { void call('visible-session', { sessionId: sessionId ?? null }).catch(() => {}) },
     // DS Bot's own Models page: the providers DSH serves, their keys and models.
     openModels: () => openSettings('models'),
     closeSettings: () => { ui.set(state => (state.settings ? { ...state, settings: null } : state)) },

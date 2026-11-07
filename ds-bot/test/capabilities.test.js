@@ -554,17 +554,72 @@ test('an idle group Session loses its mounts and remounts when it is used again'
   assert.equal(env.mounts[1].disposed, false)
 })
 
-// The user's message into a Bot's own chat goes to DSH itself, so nothing would
-// mount the server before its first step: that Session keeps its mounts.
-test('an idle Bot chat keeps its mounts, unlike a group Session', async t => {
+// A save reconciles every Agent ds-bot knows, which would mount a reclaimed one
+// again; only a delivery should.
+test('a save after an idle reclaim does not mount the Agent again', async t => {
+  const env = await setup({ state: idleState() })
+  t.after(() => env.dispose())
+  const { rt } = env
+  const group = testAgent('room-chief', env.mounts, env.skills)
+  rt.resolveAgent = async () => group
+  await created(env)({ agent: group })
+  await rt.capabilityIdleSweep(Date.now() + 11 * 60_000)
+  assert.equal(env.mounts[0].disposed, true)
+  await rt.save()
+  await rt.scheduleCapabilitiesReconcile()
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(env.mounts.length, 1)
+  assert.equal(env.mounts[0].disposed, true)
+  // A delivery mounts it again.
+  await rt.ensureCapabilities('room-chief')
+  assert.equal(env.mounts.length, 2)
+  assert.equal(env.mounts[1].disposed, false)
+})
+
+test('a scheduled-task list that cannot be read skips the sweep', async t => {
+  const env = await setup({ state: idleState() })
+  t.after(() => env.dispose())
+  const { rt } = env
+  const group = testAgent('room-chief', env.mounts, env.skills)
+  rt.resolveAgent = async () => group
+  await created(env)({ agent: group })
+  rt.scheduledSessions = async () => { throw new Error('catalog down') }
+  await rt.capabilityIdleSweep(Date.now() + 11 * 60_000)
+  assert.equal(env.mounts[0].disposed, false)
+})
+
+// The Session in front is mounted for the composer's first message; once the
+// window looks elsewhere, the sweep may reclaim it.
+test('only the focused Session stays mounted past the idle limit', async t => {
   const env = await setup({ state: idleState() })
   t.after(() => env.dispose())
   const { rt } = env
   const chief = testAgent('chief', env.mounts, env.skills)
+  rt.resolveAgent = async () => chief
   await created(env)({ agent: chief })
-  assert.equal(env.mounts.length, 1)
+  await rt.focusSession('chief')
+  assert.equal(rt.capabilityFocusedSession(), 'chief')
   await rt.capabilityIdleSweep(Date.now() + 11 * 60_000)
   assert.equal(env.mounts[0].disposed, false)
+  // Looking away releases it; the next sweep may reclaim it.
+  await rt.focusSession(undefined)
+  assert.equal(rt.capabilityFocusedSession(), undefined)
+  await rt.capabilityIdleSweep(Date.now() + 22 * 60_000)
+  assert.equal(env.mounts[0].disposed, true)
+})
+
+test('focusing a reclaimed Session mounts it before the composer can send', async t => {
+  const env = await setup({ state: idleState() })
+  t.after(() => env.dispose())
+  const { rt } = env
+  const chief = testAgent('chief', env.mounts, env.skills)
+  rt.resolveAgent = async () => chief
+  await created(env)({ agent: chief })
+  await rt.capabilityIdleSweep(Date.now() + 11 * 60_000)
+  assert.equal(env.mounts[0].disposed, true)
+  await rt.focusSession('chief')
+  assert.equal(env.mounts.length, 2)
+  assert.equal(env.mounts[1].disposed, false)
 })
 
 test('idleCapabilityMs changes how soon an idle group Session is reclaimed', async t => {

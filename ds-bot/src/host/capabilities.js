@@ -68,6 +68,9 @@ export function install(rt) {
   // When each Agent was last given work: a mount, a delivery, a turn about to start.
   // An Agent idle past the limit has its mounts disposed and remounts on next use.
   const lastUsed = new Map()
+  // Agents whose mounts were reclaimed on purpose: a save reconciles every Agent it
+  // knows, which would otherwise mount them all again; only a new delivery does.
+  const reclaimed = new WeakSet()
   // One reconcile chain per Agent: a slow MCP server holds up only its own Agent.
   const chains = new WeakMap()
   const queued = new WeakSet()
@@ -379,6 +382,7 @@ export function install(rt) {
   }
   // At most one run waits behind the running one; it reads the latest state when it starts.
   const reconcileOne = agent => {
+    if (reclaimed.has(agent)) return Promise.resolve()
     if (queued.has(agent)) return chains.get(agent)
     queued.add(agent)
     return onChain(agent, async () => {
@@ -439,12 +443,13 @@ export function install(rt) {
     void run.then(() => stalled.delete(agent))
     rt.warn('ds-bot: capability mount for %s did not finish within %dms; continuing', sessionId, timeoutMs)
   }
-  // A Session that is at work, waits on the user, or has a task that will fire again
-  // keeps its mounts: an idle unmount would leave a turn without its tools. A Bot's
-  // own chat keeps them too: the user's message there goes to DSH directly, so no
-  // ds-bot delivery mounts the server before the first step (a group Session's turns
-  // are all started by ds-bot, which mounts first).
-  const busySession = sessionId => rt.chatOwners?.get(sessionId) !== undefined
+  // The Session the window is looking at. DSH's composer starts a turn itself, so
+  // the mount must be there before the first step; the client reports the open
+  // Session and asks to mount it. Switching away lets the sweep reclaim it.
+  let focusedSession
+  // A Session that is at work, waits on the user, has a task that will fire again,
+  // or is in front keeps its mounts: an idle unmount would leave a turn without its tools.
+  const busySession = sessionId => sessionId === focusedSession
     || rt.live?.get(sessionId)?.turn !== undefined
     || rt.hasSubagents?.(sessionId) === true
     || state.questions?.[sessionId] !== undefined
@@ -458,6 +463,23 @@ export function install(rt) {
     await Promise.all([...agentMounts.values()].map(disposeMount))
   }
 
+  // The client reports the Session in front; mounting it here is what makes the
+  // composer's first message carry its tools after an idle reclaim.
+  async function focusSession(sessionId) {
+    focusedSession = sessionId
+    if (sessionId === undefined) return
+    const agent = agents.get(sessionId)?.deref()
+    if (agent !== undefined) {
+      lastUsed.set(agent, Date.now())
+      if ((mounts.get(agent)?.size ?? 0) > 0) return
+    }
+    try {
+      await ensureCapabilities(sessionId)
+    } catch (error) {
+      rt.warn('ds-bot: capability mount for the focused Session %s failed: %s', sessionId, error)
+    }
+  }
+
   // Dispose the mounts of every Agent idle past the limit. `now` is a test seam.
   async function sweepIdleCapabilities(now = Date.now()) {
     if (stopped) return
@@ -466,11 +488,13 @@ export function install(rt) {
       && (lastUsed.get(agent) ?? 0) <= cutoff
       && ![...agentMounts.values()].some(mount => mount.ready !== true))
     if (candidates.length === 0) return
-    let pinned = new Set()
+    // A list that cannot be read means it cannot clear a Session to reclaim it.
+    let pinned
     try {
       pinned = (await rt.scheduledSessions?.()) ?? new Set()
-    } catch {
-      pinned = new Set()
+    } catch (error) {
+      rt.warn('ds-bot: scheduled tasks could not be read; skipping idle reclaim: %s', error)
+      return
     }
     await Promise.all(candidates.map(([agent, agentMounts]) => onChain(agent, async () => {
       if (mounts.get(agent) !== agentMounts) return
@@ -478,6 +502,7 @@ export function install(rt) {
       if (sessionId === undefined) return
       // Read again inside the chain: a delivery may have landed since the scan.
       if (busySession(sessionId) || pinned.has(sessionId) || (lastUsed.get(agent) ?? 0) > cutoff) return
+      reclaimed.add(agent)
       await disposeAgentMounts(agent, agentMounts)
     })))
   }
@@ -495,6 +520,7 @@ export function install(rt) {
       return
     }
     trackAgent(agent)
+    reclaimed.delete(agent)
     lastUsed.set(agent, Date.now())
     await prepare(agent, sessionId)
   }
@@ -505,6 +531,7 @@ export function install(rt) {
     agents.set(sessionId, new WeakRef(agent))
     agent.ctx.effect(() => () => {
       if (agents.get(sessionId)?.deref() === agent) agents.delete(sessionId)
+      reclaimed.delete(agent)
       lastUsed.delete(agent)
       clearSession(sessionId)
       for (const mount of mounts.get(agent)?.values() ?? []) void disposeMount(mount)
@@ -579,7 +606,7 @@ export function install(rt) {
   })
   const idleTimer = setInterval(() => { void sweepIdleCapabilities() }, IDLE_SCAN_MS)
   idleTimer.unref?.()
-  Object.assign(rt, { capabilityIdleSweep: sweepIdleCapabilities })
+  Object.assign(rt, { capabilityIdleSweep: sweepIdleCapabilities, focusSession, capabilityFocusedSession: () => focusedSession })
   ctx.effect(() => {
     void rt.load().then(async () => {
       for (const bot of Object.values(state.bots)) {
@@ -593,6 +620,7 @@ export function install(rt) {
       mounts.clear()
       agents.clear()
       sessionStatuses.clear()
+      focusedSession = undefined
       clearInterval(idleTimer)
       await Promise.all(live.flatMap(agentMounts => [...agentMounts.values()].map(disposeMount)))
     }

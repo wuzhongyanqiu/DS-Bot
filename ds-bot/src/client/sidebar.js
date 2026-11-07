@@ -1023,6 +1023,31 @@ function useLandOnMainBot(roster, useSessions, actions) {
     return row ? `${row.id}|${row.blank ? 1 : 0}` : ''
   })
   const lastBot = useRef(null)
+  // The host pins the Session in front so a composer message finds its tools
+  // mounted; a hidden window or a switch away releases it to the idle sweep.
+  const focusSession = useRef(actions.focusSession)
+  focusSession.current = actions.focusSession
+  const visible = mainView.split('|')[0]
+  useEffect(() => {
+    if (!roster.ready) return undefined
+    const id = visible === '' ? null : visible
+    const report = () => focusSession.current?.(id)
+    report()
+    const onVisibility = () => focusSession.current?.(document.hidden ? null : id)
+    // The composer taking focus is the last moment before the user may type.
+    const onFocusIn = (event) => {
+      if (event.target instanceof Element && event.target.closest('[contenteditable="true"], textarea')) report()
+    }
+    const onPageHide = () => focusSession.current?.(null)
+    document.addEventListener('visibilitychange', onVisibility)
+    document.addEventListener('focusin', onFocusIn)
+    window.addEventListener('pagehide', onPageHide)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility)
+      document.removeEventListener('focusin', onFocusIn)
+      window.removeEventListener('pagehide', onPageHide)
+    }
+  }, [visible, roster.ready])
   useEffect(() => {
     if (!roster.ready || !roster.mainBotId) return undefined
     const [id, blank] = mainView.split('|')

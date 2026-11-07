@@ -49,3 +49,14 @@ test('openModels opens DS Bot settings on the Models page and closes the menus',
   actions.openSettings()
   assert.deepEqual(ui.getSnapshot().settings, { page: 'general', id: null })
 })
+
+test('the Session in front is reported without pulling the team', async () => {
+  const { actions, sent, pulls } = bench()
+  actions.focusSession('chief')
+  actions.focusSession(null)
+  assert.deepEqual(sent, [
+    ['visible-session', { sessionId: 'chief' }],
+    ['visible-session', { sessionId: null }],
+  ])
+  assert.equal(pulls(), 0)
+})

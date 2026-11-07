@@ -132,7 +132,7 @@ export function install(rt) {
   }
   // What a host that only reads the team may still answer.
   // Updates change the dsh profile, not the team, so a reading host may run them too.
-  const READS = new Set(['state', 'models', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'room-progress', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'thinking', 'avatar-library', 'computer-system-status', 'computer-shot', 'local-agents'])
+  const READS = new Set(['state', 'models', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'room-progress', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'thinking', 'avatar-library', 'computer-system-status', 'computer-shot', 'local-agents', 'visible-session'])
 
   async function setPrefs(body) {
     if (body.theme !== undefined) {
@@ -626,6 +626,19 @@ export function install(rt) {
         case 'im-login-wait':
           await rt.load()
           return ok(await rt.imEndpoint(endpoint, body))
+        // Which Session is in front. Read-only windows report it too: it only
+        // mounts the capability servers this window is about to show.
+        case 'visible-session': {
+          await rt.load()
+          if (body.sessionId === null || body.sessionId === undefined) {
+            await rt.focusSession?.(undefined)
+            return ok(true)
+          }
+          const sessionId = String(body.sessionId)
+          if (!rt.isBotSession(sessionId)) return fail('Unknown session', 'bot/not-found')
+          await rt.focusSession?.(sessionId)
+          return ok(true)
+        }
         case 'local-agents':
         case 'local-agent-refresh':
         case 'local-agent-scan':
