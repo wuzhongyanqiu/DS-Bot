@@ -180,6 +180,12 @@ export function install(rt) {
       if (body.enterToSend === false) state.prefs.enterToSend = false
       else if (body.enterToSend === true || body.enterToSend === null) delete state.prefs.enterToSend
     }
+    // Bot rows are off unless the user turned them on; a switch off removes the key.
+    if (body.showBots !== undefined) {
+      if (body.showBots === true) state.prefs.showBots = true
+      else if (body.showBots === false || body.showBots === null) delete state.prefs.showBots
+      else throw invalid('Show Bot chats must be true or false')
+    }
     return rt.save()
   }
 

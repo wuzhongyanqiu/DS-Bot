@@ -335,17 +335,22 @@ export function TeamSidebar(props) {
     for (const id of list.ids) stamps[id] = list.byId[id]?.updatedAt ?? 0
     return JSON.stringify(stamps)
   })
+  // Bots stay out of the list until the user turns them on in Settings → General. A
+  // Bot's chat is then reached from a group's members, search, or @; Agent rows are
+  // not group members and keep their place.
+  const showBots = roster.prefs?.showBots === true
   const order = useMemo(() => {
     const stamps = JSON.parse(updated)
     const entries = [
-      ...roster.bots.filter(bot => bot.id !== roster.mainBotId).map(bot => ({ kind: 'bot', item: bot, at: stamps[currentPart(bot)] ?? bot.createdAt })),
+      ...(showBots ? roster.bots.filter(bot => bot.id !== roster.mainBotId).map(bot => ({ kind: 'bot', item: bot, at: stamps[currentPart(bot)] ?? bot.createdAt })) : []),
       ...roster.rooms.map(room => ({ kind: 'room', item: room, at: stamps[room.id] ?? room.createdAt })),
       // The Agent sorts by its most recent Session, falling back to when it was added.
       ...(roster.agents ?? []).map(agent => ({ kind: 'agent', item: agent, at: Math.max(0, ...agent.sessions.map(id => stamps[id] ?? 0)) || agent.createdAt })),
     ]
     return entries.sort((a, b) => Number(Boolean(b.item.pinned)) - Number(Boolean(a.item.pinned)) || b.at - a.at)
-  }, [roster, updated])
-  const main = roster.byId[roster.mainBotId]
+  }, [roster, updated, showBots])
+  const main = showBots ? roster.byId[roster.mainBotId] : undefined
+  const emptyList = wideContent && !showBots && roster.ready && order.length === 0
   useListGlide(listRef, wideContent, order.map(entry => entry.item.id).join(','))
   useLandOnMainBot(roster, useSessions, actions)
   useReportReady(roster.ready, roster)
@@ -589,6 +594,7 @@ export function TeamSidebar(props) {
     wideContent && roster.readOnly ? h('div', { className: 'bt-hint bt-read-only', role: 'status' }, hostText(roster.readOnly)) : null,
     h('div', { ref: listRef, className: 'bt-list', role: 'region', 'aria-label': t('Bot list') },
       wideContent ? (main ? h(BotRow, { ...rowProps, bot: main, marked: markedUnread[main.id] === true }) : roster.ready ? null : h('div', { className: 'bt-hint' }, bootFailed ? bootHint() : t('Setting up your Main Bot…'))) : null,
+      emptyList ? h('div', { className: 'bt-hint' }, t('No group chats yet. Create a group chat, or turn on Show Bot chats in Settings.')) : null,
       order.map(entry => (entry.kind === 'bot'
         ? h(BotRow, { key: entry.item.id, ...rowProps, bot: entry.item, marked: markedUnread[entry.item.id] === true })
         : entry.kind === 'room'

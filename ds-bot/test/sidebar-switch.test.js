@@ -50,7 +50,7 @@ function navigationSidebar(wide, { leftDrawer = false } = {}) {
   const bot = { id: 'writer', name: 'Writer', createdAt: 1 }
   const room = { id: 'room', name: 'Team', members: [], createdAt: 2 }
   const agent = { id: 'agent', sessions: ['session'], createdAt: 3 }
-  const roster = { bots: [bot], rooms: [room], agents: [agent], byId: { writer: bot }, ready: true }
+  const roster = { bots: [bot], rooms: [room], agents: [agent], byId: { writer: bot }, ready: true, prefs: { showBots: true } }
   const actions = Object.fromEntries(['openSession', 'openAgent', 'openAgentSession', 'newAgentSession'].map(name => [name, id => { calls.push([name, id]); return id }]))
   actions.toggleSidebar = () => { calls.push(['toggleSidebar']) }
   actions.setLeftDrawer = (on) => { calls.push(['setLeftDrawer', on]) }
@@ -119,7 +119,7 @@ test('a row picked outside the drawer leaves it alone', () => {
 test('a running Bot\'s sidebar row shows what it is doing', () => {
   viewport.innerWidth = 1280
   const bot = { id: 'writer', name: 'Writer', createdAt: 1 }
-  const roster = { bots: [bot], rooms: [], agents: [], byId: { writer: bot }, ready: true, exchangeTurns: {} }
+  const roster = { bots: [bot], rooms: [], agents: [], byId: { writer: bot }, ready: true, exchangeTurns: {}, prefs: { showBots: true } }
   const rows = []
   const walk = (node) => {
     if (Array.isArray(node)) { node.forEach(walk); return }
@@ -170,7 +170,7 @@ test('a running Bot\'s sidebar row shows what it is doing', () => {
 test('an idle Bot\'s sidebar row keeps the message preview', () => {
   viewport.innerWidth = 1280
   const bot = { id: 'writer', name: 'Writer', createdAt: 1 }
-  const roster = { bots: [bot], rooms: [], agents: [], byId: { writer: bot }, ready: true, exchangeTurns: {} }
+  const roster = { bots: [bot], rooms: [], agents: [], byId: { writer: bot }, ready: true, exchangeTurns: {}, prefs: { showBots: true } }
   const rows = []
   const walk = (node) => {
     if (Array.isArray(node)) { node.forEach(walk); return }
@@ -212,7 +212,7 @@ test('a sidebar row shows its name on hover when the name is hidden or cut', () 
   viewport.innerWidth = 1280
   const bot = { id: 'writer', name: 'Writer', createdAt: 1 }
   const room = { id: 'room', name: 'Launch plan for the spring release', members: ['writer'], createdAt: 2 }
-  const roster = { bots: [bot], rooms: [room], agents: [], byId: { writer: bot }, roomsById: { room }, ready: true, exchangeTurns: {} }
+  const roster = { bots: [bot], rooms: [room], agents: [], byId: { writer: bot }, roomsById: { room }, ready: true, exchangeTurns: {}, prefs: { showBots: true } }
   const rowsOf = (pref) => {
     const rows = []
     const walk = (node) => {
@@ -592,3 +592,90 @@ test('TeamSidebar subscribes to specific ui slices rather than the whole ui obje
   }
 })
 
+// Bots stay off the sidebar until the user turns them on; group chats and Agent
+// rows keep their places, and an empty list says what to do rather than going blank.
+function sidebarWith(roster, { pref } = {}) {
+  viewport.innerWidth = 1280
+  const rows = []
+  const hints = []
+  const walk = (node) => {
+    if (Array.isArray(node)) { node.forEach(walk); return }
+    if (!node || typeof node !== 'object') return
+    if (['BotRow', 'RoomRow', 'AgentRow'].includes(node.type?.name)) rows.push(node)
+    if (typeof node.props?.className === 'string' && node.props.className.split(' ').includes('bt-hint')) hints.push(node)
+    walk(node.props?.children)
+  }
+  walk(TeamSidebar({
+    wide: true, actions: {},
+    useRoster: pick => pick(roster), useUi: pick => pick({ unread: {} }), useRegistry: pick => pick({}),
+    useSessions: pick => pick({ ids: [], byId: {} }), useUpdate: () => ({}),
+    useSidebarPref: pref ? pick => pick(pref) : undefined,
+    useSessionStatus: pick => pick(new Map()), useSessionRetainInfo: () => null,
+    useActivity: pick => pick({}), useWork: pick => pick({ waiting: {}, rooms: {}, approvals: [] }),
+  }))
+  return { rows, hints }
+}
+
+function teamFrom(bots, rooms, agents = []) {
+  const byId = Object.fromEntries(bots.map(bot => [bot.id, bot]))
+  return {
+    mainBotId: bots[0]?.id, bots, rooms, agents, byId,
+    roomsById: Object.fromEntries(rooms.map(room => [room.id, room])),
+    ready: true, exchangeTurns: {},
+  }
+}
+
+const textOf = (node) => {
+  if (node === null || node === undefined || typeof node === 'boolean') return ''
+  if (typeof node === 'string' || typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(textOf).join('')
+  return textOf(node.props?.children)
+}
+
+test('with Bot chats off the sidebar lists groups and Agents but no Bot row or tile', () => {
+  const roster = teamFrom(
+    [{ id: 'chief', name: 'Chief', createdAt: 1 }, { id: 'writer', name: 'Writer', createdAt: 2 }],
+    [{ id: 'room', name: 'Team', members: [], createdAt: 3 }],
+    [{ id: 'agent', sessions: ['agent-session'], createdAt: 4 }],
+  )
+  const { rows, hints } = sidebarWith(roster)
+  assert.deepEqual(rows.map(row => row.type.name), ['AgentRow', 'RoomRow'])
+  assert.deepEqual(rows.filter(row => row.type.name !== 'AgentRow').map(row => row.props.room.id), ['room'])
+  assert.equal(hints.length, 0)
+})
+
+test('with Bot chats off the rail shows no Bot avatar either', () => {
+  const roster = teamFrom(
+    [{ id: 'chief', name: 'Chief', createdAt: 1 }, { id: 'writer', name: 'Writer', createdAt: 2 }],
+    [{ id: 'room', name: 'Team', members: [], createdAt: 3 }],
+  )
+  const { rows } = sidebarWith(roster, { pref: 'rail' })
+  assert.deepEqual(rows.map(row => row.type.name), ['RoomRow'])
+})
+
+test('with Bot chats on every Bot returns, Main Bot tile first', () => {
+  const roster = teamFrom(
+    [{ id: 'chief', name: 'Chief', createdAt: 1 }, { id: 'writer', name: 'Writer', createdAt: 2 }],
+    [{ id: 'room', name: 'Team', members: [], createdAt: 3 }],
+    [{ id: 'agent', sessions: ['agent-session'], createdAt: 4 }],
+  )
+  roster.prefs = { showBots: true }
+  const { rows } = sidebarWith(roster)
+  assert.deepEqual(rows.map(row => row.type.name), ['BotRow', 'AgentRow', 'RoomRow', 'BotRow'])
+  assert.deepEqual(rows.filter(row => row.type.name === 'BotRow').map(row => row.props.bot.id), ['chief', 'writer'])
+})
+
+test('an empty list says how to start instead of going blank', () => {
+  const roster = teamFrom([{ id: 'chief', name: 'Chief', createdAt: 1 }], [])
+  const { rows, hints } = sidebarWith(roster)
+  assert.deepEqual(rows, [])
+  assert.equal(hints.length, 1)
+  assert.match(textOf(hints[0]), /No group chats yet/)
+})
+
+test('an empty list with an Agent row needs no hint', () => {
+  const roster = teamFrom([{ id: 'chief', name: 'Chief', createdAt: 1 }], [], [{ id: 'agent', sessions: ['agent-session'], createdAt: 2 }])
+  const { rows, hints } = sidebarWith(roster)
+  assert.deepEqual(rows.map(row => row.type.name), ['AgentRow'])
+  assert.equal(hints.length, 0)
+})
