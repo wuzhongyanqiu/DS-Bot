@@ -594,7 +594,7 @@ export function TeamSidebar(props) {
     wideContent && roster.readOnly ? h('div', { className: 'bt-hint bt-read-only', role: 'status' }, hostText(roster.readOnly)) : null,
     h('div', { ref: listRef, className: 'bt-list', role: 'region', 'aria-label': t('Bot list') },
       wideContent ? (main ? h(BotRow, { ...rowProps, bot: main, marked: markedUnread[main.id] === true }) : roster.ready ? null : h('div', { className: 'bt-hint' }, bootFailed ? bootHint() : t('Setting up your Main Bot…'))) : null,
-      emptyList ? h('div', { className: 'bt-hint bt-list-empty' }, t('No group chats yet. Create a group chat, or turn on Show Bot chats in Settings.')) : null,
+      emptyList ? h('div', { className: 'bt-hint' }, t('No group chats yet. Create a group chat, or turn on Show Bot chats in Settings.')) : null,
       order.map(entry => (entry.kind === 'bot'
         ? h(BotRow, { key: entry.item.id, ...rowProps, bot: entry.item, marked: markedUnread[entry.item.id] === true })
         : entry.kind === 'room'

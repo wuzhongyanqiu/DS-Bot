@@ -592,7 +592,6 @@ test('TeamSidebar subscribes to specific ui slices rather than the whole ui obje
   }
 })
 
-
 // Bots stay off the sidebar until the user turns them on; group chats and Agent
 // rows keep their places, and an empty list says what to do rather than going blank.
 function sidebarWith(roster, { pref } = {}) {
@@ -603,7 +602,7 @@ function sidebarWith(roster, { pref } = {}) {
     if (Array.isArray(node)) { node.forEach(walk); return }
     if (!node || typeof node !== 'object') return
     if (['BotRow', 'RoomRow', 'AgentRow'].includes(node.type?.name)) rows.push(node)
-    if (typeof node.props?.className === 'string' && node.props.className.includes('bt-list-empty')) hints.push(node)
+    if (typeof node.props?.className === 'string' && node.props.className.split(' ').includes('bt-hint')) hints.push(node)
     walk(node.props?.children)
   }
   walk(TeamSidebar({

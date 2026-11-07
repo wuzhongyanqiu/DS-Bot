@@ -79,7 +79,7 @@ function WidthSlider({ label, value, save }) {
     h('output', null, `${width}%`))
 }
 
-function GeneralPage({ roster, actions, run }) {
+export function GeneralPage({ roster, actions, run }) {
   const prefs = roster.prefs ?? {}
   const themes = allThemes()
   const current = themes[prefs.theme] ? prefs.theme : 'deepseek'

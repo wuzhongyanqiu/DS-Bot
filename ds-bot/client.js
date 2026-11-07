@@ -15228,7 +15228,7 @@ function TeamSidebar(props) {
       "div",
       { ref: listRef, className: "bt-list", role: "region", "aria-label": t("Bot list") },
       wideContent ? main ? (0, import_react33.createElement)(BotRow, { ...rowProps, bot: main, marked: markedUnread[main.id] === true }) : roster.ready ? null : (0, import_react33.createElement)("div", { className: "bt-hint" }, bootFailed ? bootHint() : t("Setting up your Main Bot…")) : null,
-      emptyList ? (0, import_react33.createElement)("div", { className: "bt-hint bt-list-empty" }, t("No group chats yet. Create a group chat, or turn on Show Bot chats in Settings.")) : null,
+      emptyList ? (0, import_react33.createElement)("div", { className: "bt-hint" }, t("No group chats yet. Create a group chat, or turn on Show Bot chats in Settings.")) : null,
       order.map((entry) => entry.kind === "bot" ? (0, import_react33.createElement)(BotRow, { key: entry.item.id, ...rowProps, bot: entry.item, marked: markedUnread[entry.item.id] === true }) : entry.kind === "room" ? (0, import_react33.createElement)(RoomRow, { key: entry.item.id, ...rowProps, room: entry.item, marked: markedUnread[entry.item.id] === true }) : (0, import_react33.createElement)(AgentRow, { key: entry.item.id, ...rowProps, agent: entry.item, marked: markedUnread[entry.item.id] === true }))
     ),
     foot
