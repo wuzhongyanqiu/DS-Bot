@@ -525,3 +525,88 @@ test('a failed HTTP MCP mount does not show the encoded secret from its URL', as
   assert.equal(status.state, 'error')
   assert.equal(status.error, 'Connection failed: fetch https://mcp.exa.test/mcp?apiKey=[secret:EXA_API_KEY]')
 })
+
+// Idle reclamation: mounts leave after ten idle minutes and come back on next use.
+const idleState = () => {
+  const state = team()
+  state.capabilities = { items: { echo: { ...mcp('echo'), approved: true, createdBy: 'chief', createdAt: 1, updatedAt: 1 } } }
+  state.bots.chief.capabilities = ['echo']
+  return state
+}
+
+test('an idle group Session loses its mounts and remounts when it is used again', async t => {
+  const env = await setup({ state: idleState() })
+  t.after(() => env.dispose())
+  const { rt } = env
+  const group = testAgent('room-chief', env.mounts, env.skills)
+  rt.resolveAgent = async () => group
+  await created(env)({ agent: group })
+  assert.equal(env.mounts.length, 1)
+  // Not idle yet.
+  await rt.capabilityIdleSweep(Date.now() + 5 * 60_000)
+  assert.equal(env.mounts[0].disposed, false)
+  // Ten idle minutes: disposed.
+  await rt.capabilityIdleSweep(Date.now() + 11 * 60_000)
+  assert.equal(env.mounts[0].disposed, true)
+  // The next delivery mounts it again.
+  await rt.ensureCapabilities('room-chief')
+  assert.equal(env.mounts.length, 2)
+  assert.equal(env.mounts[1].disposed, false)
+})
+
+// The user's message into a Bot's own chat goes to DSH itself, so nothing would
+// mount the server before its first step: that Session keeps its mounts.
+test('an idle Bot chat keeps its mounts, unlike a group Session', async t => {
+  const env = await setup({ state: idleState() })
+  t.after(() => env.dispose())
+  const { rt } = env
+  const chief = testAgent('chief', env.mounts, env.skills)
+  await created(env)({ agent: chief })
+  assert.equal(env.mounts.length, 1)
+  await rt.capabilityIdleSweep(Date.now() + 11 * 60_000)
+  assert.equal(env.mounts[0].disposed, false)
+})
+
+test('idleCapabilityMs changes how soon an idle group Session is reclaimed', async t => {
+  const env = await setup({ state: idleState() })
+  t.after(() => env.dispose())
+  const { rt } = env
+  rt.config.idleCapabilityMs = 60_000
+  const group = testAgent('room-chief', env.mounts, env.skills)
+  rt.resolveAgent = async () => group
+  await created(env)({ agent: group })
+  await rt.capabilityIdleSweep(Date.now() + 30_000)
+  assert.equal(env.mounts[0].disposed, false)
+  await rt.capabilityIdleSweep(Date.now() + 61_000)
+  assert.equal(env.mounts[0].disposed, true)
+})
+
+test('a Session at work, waiting on the user, or with a scheduled task keeps its mounts', async t => {
+  const env = await setup({ state: idleState() })
+  t.after(() => env.dispose())
+  const { rt } = env
+  const group = testAgent('room-chief', env.mounts, env.skills)
+  rt.resolveAgent = async () => group
+  await created(env)({ agent: group })
+  const idleLater = () => rt.capabilityIdleSweep(Date.now() + 11 * 60_000)
+  rt.live.set('room-chief', { turn: 1 })
+  await idleLater()
+  assert.equal(env.mounts[0].disposed, false)
+  rt.live.delete('room-chief')
+  rt.state.questions['room-chief'] = { id: 'q' }
+  await idleLater()
+  assert.equal(env.mounts[0].disposed, false)
+  delete rt.state.questions['room-chief']
+  const approvals = rt.approvalsView
+  rt.approvalsView = () => [{ sessionId: 'room-chief' }]
+  await idleLater()
+  assert.equal(env.mounts[0].disposed, false)
+  rt.approvalsView = approvals
+  const scheduled = rt.scheduledSessions
+  rt.scheduledSessions = async () => new Set(['room-chief'])
+  await idleLater()
+  assert.equal(env.mounts[0].disposed, false)
+  rt.scheduledSessions = scheduled
+  await idleLater()
+  assert.equal(env.mounts[0].disposed, true)
+})

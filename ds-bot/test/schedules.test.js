@@ -94,6 +94,19 @@ function setup(services = {}) {
   return { ctx, home, call, rt }
 }
 
+test('scheduledSessions names only Sessions with a task that can still fire', async (t) => {
+  const schedule = scheduleService()
+  const { ctx, home, rt } = setup({ schedule })
+  t.after(async () => { await ctx.dispose(); rmSync(home, { recursive: true, force: true, maxRetries: 5 }) })
+  await schedule.create('w1', { title: 'Daily', prompt: 'x', daily: { time: '09:00', time_zone: 'UTC' } })
+  schedule.tasks.set('schedule-done', {
+    sessionId: 'w1',
+    record: { id: 'schedule-done', kind: 'at', title: 'Done', prompt: 'x', scheduledAt: '2020-01-01T00:00:00.000Z' },
+    status: 'ended',
+  })
+  assert.deepEqual([...(await rt.scheduledSessions())], ['w1'])
+})
+
 test('without the schedule service the page says so and creating is refused', async (t) => {
   const { ctx, home, call } = setup()
   t.after(async () => { await ctx.dispose(); rmSync(home, { recursive: true, force: true, maxRetries: 5 }) })

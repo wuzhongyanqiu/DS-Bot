@@ -6,6 +6,14 @@ const MCP_CLIENT = '@deepseek-ai/dsh-mcp-client'
 const NAME = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/
 const SECRET_REFERENCE = /\$DSH_SECRET_([A-Z][A-Z0-9_]*)/g
 const ENSURE_TIMEOUT_MS = 15_000
+// Idle capability reclamation: a scan every minute, mounts disposed after ten idle
+// minutes. The scan only looks at Agents that already hold mounts.
+const IDLE_SCAN_MS = 60_000
+const IDLE_MOUNT_MS = 10 * 60_000
+const idleMountMs = rt => {
+  const value = rt.config?.idleCapabilityMs
+  return typeof value === 'number' && value >= 0 ? value : IDLE_MOUNT_MS
+}
 
 // Connector ids are reserved: a capability named like one would collide with
 // its mcp__<id>__* tool prefix. The connectors module registers its ids here.
@@ -57,6 +65,9 @@ export function install(rt) {
   // Mounted fibers live in each Agent's own context, so they outlive this plugin unless
   // its cleanup disposes them; a strong map keeps them reachable for that.
   const mounts = new Map()
+  // When each Agent was last given work: a mount, a delivery, a turn about to start.
+  // An Agent idle past the limit has its mounts disposed and remounts on next use.
+  const lastUsed = new Map()
   // One reconcile chain per Agent: a slow MCP server holds up only its own Agent.
   const chains = new WeakMap()
   const queued = new WeakSet()
@@ -291,6 +302,7 @@ export function install(rt) {
   }
   const mountOne = async (agent, bot, agentMounts, name) => {
     const sessionId = agent.session.id
+    lastUsed.set(agent, Date.now())
     const item = own(library(), name)
     const drop = async () => {
       await disposeMount(agentMounts.get(name))
@@ -325,8 +337,10 @@ export function install(rt) {
         : await loadMcpPlugin()
       if (stopped) return
       const fiber = item.kind === 'skill' ? agent.ctx.plugin(plugin) : agent.ctx.plugin(plugin, config)
-      agentMounts.set(name, { key, fiber })
+      const mount = { key, fiber, ready: false }
+      agentMounts.set(name, mount)
       await fiber.await()
+      mount.ready = true
       if (stopped || agents.get(sessionId)?.deref() !== agent) return
       statusSet(bot.id, name, sessionId, { state: 'ready' })
     } catch (error) {
@@ -356,18 +370,23 @@ export function install(rt) {
     if (agentMounts.size === 0 && mounts.get(agent) === agentMounts) mounts.delete(agent)
   }
   const botOfSession = sessionId => (rt.isBotSession(sessionId) ? rt.botOf(rt.selfOf(sessionId)) : undefined)
+  // One run per Agent at a time: a mount, a reconcile, or an idle disposal.
+  const onChain = (agent, run) => {
+    const next = (chains.get(agent) ?? Promise.resolve()).then(run)
+      .catch(error => rt.warn('ds-bot: capability reconcile for %s failed: %s', agent.session?.id, error))
+    chains.set(agent, next)
+    return next
+  }
   // At most one run waits behind the running one; it reads the latest state when it starts.
   const reconcileOne = agent => {
     if (queued.has(agent)) return chains.get(agent)
     queued.add(agent)
-    const run = (chains.get(agent) ?? Promise.resolve()).then(async () => {
+    return onChain(agent, async () => {
       queued.delete(agent)
       const sessionId = agent.session.id
       if (stopped || agents.get(sessionId)?.deref() !== agent) return
       await reconcileAgent(agent, botOfSession(sessionId))
-    }).catch(error => rt.warn('ds-bot: capability reconcile for %s failed: %s', agent.session?.id, error))
-    chains.set(agent, run)
-    return run
+    })
   }
   const loadInputs = async () => {
     await rt.load()
@@ -420,6 +439,49 @@ export function install(rt) {
     void run.then(() => stalled.delete(agent))
     rt.warn('ds-bot: capability mount for %s did not finish within %dms; continuing', sessionId, timeoutMs)
   }
+  // A Session that is at work, waits on the user, or has a task that will fire again
+  // keeps its mounts: an idle unmount would leave a turn without its tools. A Bot's
+  // own chat keeps them too: the user's message there goes to DSH directly, so no
+  // ds-bot delivery mounts the server before the first step (a group Session's turns
+  // are all started by ds-bot, which mounts first).
+  const busySession = sessionId => rt.chatOwners?.get(sessionId) !== undefined
+    || rt.live?.get(sessionId)?.turn !== undefined
+    || rt.hasSubagents?.(sessionId) === true
+    || state.questions?.[sessionId] !== undefined
+    || (rt.approvalsView?.() ?? []).some(entry => entry.sessionId === sessionId)
+
+  const disposeAgentMounts = async (agent, agentMounts) => {
+    const sessionId = agent.session?.id
+    if (sessionId !== undefined) clearSession(sessionId)
+    mounts.delete(agent)
+    lastUsed.delete(agent)
+    await Promise.all([...agentMounts.values()].map(disposeMount))
+  }
+
+  // Dispose the mounts of every Agent idle past the limit. `now` is a test seam.
+  async function sweepIdleCapabilities(now = Date.now()) {
+    if (stopped) return
+    const cutoff = now - idleMountMs(rt)
+    const candidates = [...mounts].filter(([agent, agentMounts]) => agentMounts.size > 0
+      && (lastUsed.get(agent) ?? 0) <= cutoff
+      && ![...agentMounts.values()].some(mount => mount.ready !== true))
+    if (candidates.length === 0) return
+    let pinned = new Set()
+    try {
+      pinned = (await rt.scheduledSessions?.()) ?? new Set()
+    } catch {
+      pinned = new Set()
+    }
+    await Promise.all(candidates.map(([agent, agentMounts]) => onChain(agent, async () => {
+      if (mounts.get(agent) !== agentMounts) return
+      const sessionId = agent.session?.id
+      if (sessionId === undefined) return
+      // Read again inside the chain: a delivery may have landed since the scan.
+      if (busySession(sessionId) || pinned.has(sessionId) || (lastUsed.get(agent) ?? 0) > cutoff) return
+      await disposeAgentMounts(agent, agentMounts)
+    })))
+  }
+
   async function ensureCapabilities(sessionId) {
     await rt.load()
     const bot = botOfSession(sessionId)
@@ -433,6 +495,7 @@ export function install(rt) {
       return
     }
     trackAgent(agent)
+    lastUsed.set(agent, Date.now())
     await prepare(agent, sessionId)
   }
   const trackAgent = agent => {
@@ -442,6 +505,7 @@ export function install(rt) {
     agents.set(sessionId, new WeakRef(agent))
     agent.ctx.effect(() => () => {
       if (agents.get(sessionId)?.deref() === agent) agents.delete(sessionId)
+      lastUsed.delete(agent)
       clearSession(sessionId)
       for (const mount of mounts.get(agent)?.values() ?? []) void disposeMount(mount)
       mounts.delete(agent)
@@ -513,6 +577,9 @@ export function install(rt) {
       rt.warn('ds-bot: capability load failed: %s', error)
     }
   })
+  const idleTimer = setInterval(() => { void sweepIdleCapabilities() }, IDLE_SCAN_MS)
+  idleTimer.unref?.()
+  Object.assign(rt, { capabilityIdleSweep: sweepIdleCapabilities })
   ctx.effect(() => {
     void rt.load().then(async () => {
       for (const bot of Object.values(state.bots)) {
@@ -526,6 +593,7 @@ export function install(rt) {
       mounts.clear()
       agents.clear()
       sessionStatuses.clear()
+      clearInterval(idleTimer)
       await Promise.all(live.flatMap(agentMounts => [...agentMounts.values()].map(disposeMount)))
     }
   }, 'ds-bot: capabilities')

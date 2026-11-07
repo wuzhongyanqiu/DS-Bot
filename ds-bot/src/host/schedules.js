@@ -126,6 +126,24 @@ export function install(rt) {
     return { available: true, tasks }
   }
 
+  // The Sessions that still have a task to fire. Their mounts stay warm: DSH delivers
+  // a due task itself, which cannot wait for a capability to mount again.
+  async function scheduledSessions() {
+    if (service === null) return new Set()
+    const ids = new Set()
+    try {
+      for (const entry of await service.catalog()) {
+        // A paused task can be resumed, so its Session stays warm too.
+        if (entry.status !== 'active' && entry.status !== 'paused') continue
+        const sessionId = sessionOf(entry)
+        if (sessionId !== undefined) ids.add(sessionId)
+      }
+    } catch {
+      return new Set()
+    }
+    return ids
+  }
+
   const endpoints = {
     schedules: () => schedulesView(),
     async 'schedule-create'(body) {
@@ -244,5 +262,5 @@ export function install(rt) {
     return { ...result, value: { ...result.value, items, shown: items.length, total: positions.length, limit, offset } }
   })
 
-  Object.assign(rt, { scheduleEndpoint: (endpoint, body) => endpoints[endpoint](body ?? {}), moveSchedules })
+  Object.assign(rt, { scheduleEndpoint: (endpoint, body) => endpoints[endpoint](body ?? {}), moveSchedules, scheduledSessions })
 }
