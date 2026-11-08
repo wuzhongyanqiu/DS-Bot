@@ -1364,6 +1364,8 @@ test('the team view says when each Session\'s running turn began, for the clock 
   assert.deepEqual(Object.keys(value.work.turns), ['gb'])
   assert.ok(value.work.turns.gb >= before && value.work.turns.gb <= Date.now())
   assert.equal(value.work.turns.gb, value.work.bots.b.since)
+  // The sidebar's clock starts with the call, not the turn, wherever it is read.
+  assert.ok(value.work.bots.b.callSince >= value.work.bots.b.since && value.work.bots.b.callSince <= Date.now())
   host.emit('gb', 'tool/result', { callId: 'k1' })
   host.emit('gb', 'turn/end', { turn: 1, reason: { kind: 'completed' } })
   assert.deepEqual((await host.call('state', {})).value.work.turns, {})
@@ -1654,7 +1656,9 @@ test('a group member with a running DSH subagent stays working and stop-room-wor
   // Even though gb's own turn ended, Writer still shows as working on its subagent in r1.
   const stateDuring = (await host.call('state', {})).value
   assert.equal(stateDuring.activity.b, 'working')
-  assert.deepEqual(stateDuring.work.rooms.r1, [{ botId: 'b', since: stateDuring.work.rooms.r1[0].since, tool: 'subagent', note: 'Run long benchmark' }])
+  const subagentWork = stateDuring.work.rooms.r1[0]
+  assert.deepEqual([subagentWork.botId, subagentWork.tool, subagentWork.note], ['b', 'subagent', 'Run long benchmark'])
+  assert.equal(subagentWork.since, subagentWork.callSince)
 
   // User clicks "Stop all" in the group: it interrupts sub-1 and logs Writer as stopped.
   const stopped = await host.call('stop-room-work', { roomId: 'r1' })

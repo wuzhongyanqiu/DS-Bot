@@ -8,7 +8,7 @@ import { lookOf, MAIN_LOOK } from './characters.js'
 import { botState, BotMark, BotAvatar, RoomAvatar } from './mark.js'
 import { AgentBadge } from './agent-badge.js'
 import { reducedMotion } from './activity-row.js'
-import { Shimmer, workPhrase } from './cells.js'
+import { Elapsed, Shimmer, toolPhrase, workPhrase } from './cells.js'
 import { SPRING_GLIDE, SPRING_POP, SPRING_SHAPE, stepMenuFocus, useLinger, useViewport, viewBottom } from './motion.js'
 import { hostText, t } from './i18n.js'
 import { clientErrors } from './diagnostics.js'
@@ -50,17 +50,32 @@ const useGroupWork = (useWork, pick) => {
   const raw = useWork ? useWork(work => JSON.stringify(pick(work.rooms ?? {}))) : '[]'
   return useMemo(() => JSON.parse(raw), [raw])
 }
-const doingOf = ({ tool, said, note, target, switching }) => ({ tool, said, note, target, switching })
-const workLine = (lead, doing, more) => h(Shimmer, null, `${lead} · ${workPhrase(doing)}…${more > 0 ? ` +${more}` : ''}`)
-// The row already names the Bot; its own-chat preview is just what it is doing.
-const doingLine = doing => h(Shimmer, null, `${workPhrase(doing)}…`)
+const doingOf = ({ tool, said, note, target, switching, since, callSince }) => ({ tool, said, note, target, switching, since, callSince })
+// The member whose work began last — its running call, else its turn — is the one a
+// group row names.
+const latestOf = entries => entries.reduce((best, entry) => (best === undefined || (entry.callSince ?? entry.since ?? 0) > (best.callSince ?? best.since ?? 0) ? entry : best), undefined)
+// The one line a row shows while work runs: the tool it calls, or that it is thinking.
+const doingPhrase = doing => {
+  if (typeof doing === 'string') return toolPhrase(doing)
+  if (doing?.switching) return workPhrase(doing)
+  return doing?.tool ? toolPhrase(doing.tool) : t('Thinking about it')
+}
+// The clock ticks in its own component, so a row with a running tool does not render
+// again each second — only this small span does.
+const rowClock = at => (Number.isFinite(at) ? h(Elapsed, { at, className: 'bt-row-time' }) : null)
+const workLine = (lead, doing, more = 0, at = doing?.callSince ?? doing?.since, streaming = false) => h('span', { className: 'bt-row-work' },
+  h(Shimmer, null, `${lead ? `${lead} · ` : ''}${streaming ? t('Replying') : doingPhrase(doing)}…${more > 0 ? ` +${more}` : ''}`),
+  rowClock(at))
+// A streaming reply is the transcript's own live note for the Session, the same source
+// the activity row reads; each row subscribes to its Session alone.
+const useStreaming = (useLive, sessionId) => (useLive ? useLive(state => Object.values(state[sessionId] ?? {}).some(entry => entry?.text === true)) : false)
 // The Bots and groups a Bot waits for (handoffs.js), by the names they have now.
 const waitingFor = (roster, waits) => {
   const names = [...(waits?.bots ?? []).map(id => roster.byId[id]?.name), ...(waits?.rooms ?? []).map(id => roster.roomsById[id]?.name)].filter(Boolean)
   return names.length === 0 ? '' : t('Waiting for {names}', { names: names.join(t(' and ')) })
 }
 
-function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessionRetainInfo, useActivity, useWork, wide, marked }) {
+function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessionRetainInfo, useActivity, useWork, useLive, wide, marked }) {
   const id = bot.id
   const part = currentPart(bot)
   const preview = useSessions(list => previewOf(list, part, roster.exchangeTurns[part]))
@@ -73,13 +88,20 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
   const approval = useApproval(useWork, entry => entry.botId === id)
   const alert = roster.questions?.[part] !== undefined || approval
   const doing = useActivity(map => map[id])
-  // Work in a group runs in a Session of its own, so the Bot's chat stays idle meanwhile.
+  const streaming = useStreaming(useLive, part)
+  // This Bot's own-chat work, with when its turn began. A group's work is listed apart,
+  // since it runs in a Session of its own and this chat stays idle meanwhile.
+  const ownRaw = useWork ? useWork(work => JSON.stringify({ doing: work.bots?.[id]?.roomId === undefined ? work.bots?.[id] ?? null : null, at: work.turns?.[part] ?? 0 })) : '{"doing":null,"at":0}'
+  const own = useMemo(() => JSON.parse(ownRaw), [ownRaw])
   const groups = useGroupWork(useWork, rooms => Object.entries(rooms).flatMap(([roomId, entries]) => entries.filter(entry => entry.botId === id).map(entry => ({ id: roomId, ...doingOf(entry) }))))
-  const away = !running && groups.length > 0
+  const awayWork = latestOf(groups)
+  const away = !running && awayWork !== undefined
   const state = botState(running || away, doing, alert)
-  // A Bot running in its own chat previews what it is doing, like a group's row.
-  const runningLine = running && doing ? doingLine(doing) : null
-  const awayLine = away ? workLine(roster.roomsById[groups[0].id]?.name ?? t('a group chat'), groups[0], groups.length - 1) : null
+  // A running Bot previews the tool it calls, and how long that call has run, in place
+  // of the message preview; the fallback phrase covers the instant before the host
+  // reports its first call.
+  const runningLine = running ? workLine(undefined, own?.doing ?? doing ?? {}, 0, own?.doing?.callSince ?? own?.doing?.since ?? (own?.at > 0 ? own.at : undefined), streaming) : null
+  const awayLine = away ? workLine(roster.roomsById[awayWork.id]?.name ?? t('a group chat'), awayWork, groups.length - 1, awayWork.callSince ?? awayWork.since) : null
   const waitsRaw = useWork ? useWork(work => JSON.stringify(work.waiting?.[id] ?? null)) : 'null'
   const waits = useMemo(() => JSON.parse(waitsRaw), [waitsRaw])
   const waitsFor = state === 'waiting' ? waitingFor(roster, waits) : ''
@@ -97,7 +119,8 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
     },
     h(BotAvatar, { bot, size: 60, state, main: true }),
     h('span', { className: 'bt-tile-name' }, bot.name),
-    bot.role ? h('span', { className: 'bt-chip' }, bot.role) : null))
+    bot.role ? h('span', { className: 'bt-chip' }, bot.role) : null,
+    runningLine || awayLine ? h('span', { className: 'bt-tile-work' }, runningLine ?? awayLine) : null))
   }
   return h('button', {
     type: 'button', className: 'bt-row', 'aria-label': label, 'aria-current': active ? 'page' : undefined,
@@ -115,7 +138,7 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
     : !wide && !active && (alert || unread) ? h('span', { className: `bt-dot${alert ? ' bt-dot-wait' : ''}`, 'aria-hidden': true }) : null)
 }
 
-function RoomRow({ room, roster, actions, useSessions, useSessionStatus, useSessionRetainInfo, useWork, wide, marked }) {
+function RoomRow({ room, roster, actions, useSessions, useSessionStatus, useSessionRetainInfo, useWork, useLive, wide, marked }) {
   const id = room.id
   // The group's own Session is a chain of parts; the row shows the current one.
   const sessionId = room.sessionId ?? id
@@ -126,8 +149,11 @@ function RoomRow({ room, roster, actions, useSessions, useSessionStatus, useSess
   useMarkedUnread(id, active, marked, actions)
   const approval = useApproval(useWork, entry => entry.roomId === id)
   const members = useGroupWork(useWork, rooms => (rooms[id] ?? []).filter(entry => entry.botId !== undefined).map(entry => ({ id: entry.botId, ...doingOf(entry) })))
-  const first = roster.byId[members[0]?.id]
-  const workingLine = first ? workLine(first.name, members[0], members.length - 1) : null
+  const streaming = useStreaming(useLive, sessionId)
+  // With several members at work the row names the one whose turn began last.
+  const current = latestOf(members)
+  const first = roster.byId[current?.id]
+  const workingLine = first ? workLine(first.name, current, members.length - 1, current.callSince ?? current.since, streaming) : null
   if (room.hidden && !active) return null
   const pinned = room.pinned === true
   const label = [room.name, pinned ? t('Pinned') : '', members.length > 0 ? t('Working') : '', approval ? t('Waiting for your approval') : ''].filter(Boolean).join(', ')
@@ -545,7 +571,7 @@ export function TeamSidebar(props) {
     openAgentSession: id => navigate(actions.openAgentSession, id),
     newAgentSession: id => navigate(actions.newAgentSession, id),
   }
-  const rowProps = { roster, actions: rowActions, useSessions, useUi, useSessionStatus: props.useSessionStatus, useSessionRetainInfo: props.useSessionRetainInfo, useActivity: props.useActivity, useWork: props.useWork, wide: wideContent }
+  const rowProps = { roster, actions: rowActions, useSessions, useUi, useSessionStatus: props.useSessionStatus, useSessionRetainInfo: props.useSessionRetainInfo, useActivity: props.useActivity, useWork: props.useWork, useLive: props.useLive, wide: wideContent }
   // Typing while the sidebar has focus starts a search.
   const typeToSearch = (event) => {
     if (event.defaultPrevented || event.key.length !== 1 || event.key === ' ' || event.metaKey || event.ctrlKey || event.altKey || event.nativeEvent.isComposing) return

@@ -16,7 +16,7 @@ const { JSDOM } = createRequire(join(process.env.DSH_HARNESS ?? join(PLUGIN, '..
 // fixtures retain refs across commits and run their layout effects after each render.
 const { outputFiles } = await build({
   stdin: {
-    contents: "export { SHELL_CSS } from './src/client/styles.js'\nexport { SIDEBAR_CSS, TeamSidebar } from './src/client/sidebar.js'",
+    contents: "export { SHELL_CSS } from './src/client/styles.js'\nexport { SIDEBAR_CSS, TeamSidebar } from './src/client/sidebar.js'\nexport { toolPhrase } from './src/client/cells.js'",
     resolveDir: PLUGIN,
   },
   bundle: true, format: 'cjs', platform: 'browser', write: false, logLevel: 'silent',
@@ -31,7 +31,7 @@ const react = {
   useCallback: fn => fn,
   useSyncExternalStore: (subscribe, getSnapshot) => getSnapshot(),
   createElement: (type, props, ...children) => ({ type, props: { ...props, children } }), Fragment: Symbol('Fragment'),
-  useEffect() {}, useLayoutEffect: effect => layoutEffects?.push(effect), useState: initial => [initial, () => {}],
+  useEffect() {}, useLayoutEffect: effect => layoutEffects?.push(effect), useState: initial => [typeof initial === 'function' ? initial() : initial, () => {}],
   useMemo: make => make(), useRef: current => renderRefs ? renderRefs[refIndex++] ??= { current } : { current }, useId: () => 'id',
 }
 const module = { exports: {} }
@@ -42,7 +42,7 @@ const sandbox = {
   window: viewport,
 }
 runInNewContext(outputFiles[0].text, sandbox)
-const { SHELL_CSS, SIDEBAR_CSS, TeamSidebar } = module.exports
+const { SHELL_CSS, SIDEBAR_CSS, TeamSidebar, toolPhrase } = module.exports
 
 function navigationSidebar(wide, { leftDrawer = false } = {}) {
   const calls = []
@@ -594,7 +594,7 @@ test('TeamSidebar subscribes to specific ui slices rather than the whole ui obje
 
 // Bots stay off the sidebar until the user turns them on; group chats and Agent
 // rows keep their places, and an empty list says what to do rather than going blank.
-function sidebarWith(roster, { pref } = {}) {
+function sidebarWith(roster, { pref, status, activity = {}, work = { waiting: {}, rooms: {}, approvals: [] }, live = {} } = {}) {
   viewport.innerWidth = 1280
   const rows = []
   const hints = []
@@ -610,8 +610,8 @@ function sidebarWith(roster, { pref } = {}) {
     useRoster: pick => pick(roster), useUi: pick => pick({ unread: {} }), useRegistry: pick => pick({}),
     useSessions: pick => pick({ ids: [], byId: {} }), useUpdate: () => ({}),
     useSidebarPref: pref ? pick => pick(pref) : undefined,
-    useSessionStatus: pick => pick(new Map()), useSessionRetainInfo: () => null,
-    useActivity: pick => pick({}), useWork: pick => pick({ waiting: {}, rooms: {}, approvals: [] }),
+    useSessionStatus: pick => pick(status ?? new Map()), useSessionRetainInfo: () => null,
+    useActivity: pick => pick(activity), useWork: pick => pick(work), useLive: pick => pick(live),
   }))
   return { rows, hints }
 }
@@ -690,4 +690,150 @@ test('the Main Bot tile and an Agent row need no hint', () => {
   const { rows, hints } = sidebarWith(roster)
   assert.deepEqual(rows.map(row => row.type.name), ['BotRow', 'AgentRow'])
   assert.equal(hints.length, 0)
+})
+
+// The work line a row draws: its previews, expanded through function components as a
+// browser would render them.
+function rowPreviews(row, className = 'bt-row-preview') {
+  const expand = (node) => {
+    if (Array.isArray(node)) return node.map(expand)
+    if (!node || typeof node !== 'object') return node
+    if (typeof node.type === 'function') return expand(node.type(node.props))
+    return { ...node, props: { ...node.props, children: expand(node.props.children) } }
+  }
+  const found = []
+  const collect = (node) => {
+    if (Array.isArray(node)) { node.forEach(collect); return }
+    if (!node || typeof node !== 'object') return
+    if (typeof node.props?.className === 'string' && node.props.className.split(' ').includes(className)) found.push(node)
+    collect(node.props?.children)
+  }
+  collect(expand(row.type(row.props)))
+  return found
+}
+
+test('a working Bot row names its tool and the seconds its turn has run', () => {
+  const roster = teamFrom([{ id: 'writer', name: 'Writer', createdAt: 1 }], [])
+  const since = Date.now() - 12_400
+  const { rows } = sidebarWith(roster, {
+    status: new Map([['writer', { running: true }]]),
+    activity: { writer: 'working' },
+    work: { bots: { writer: { since, tool: 'bash' } }, turns: { writer: since }, waiting: {}, rooms: {}, approvals: [] },
+  })
+  const [preview] = rowPreviews(rows[0], 'bt-tile-work')
+  const text = textOf(preview)
+  assert.match(text, /Running shell commands…/)
+  assert.match(text, /· 12s/)
+  assert.doesNotMatch(text, /On it|Thinking/)
+})
+
+test('a streaming reply replaces the tool name in the row', () => {
+  const roster = teamFrom([{ id: 'writer', name: 'Writer', createdAt: 1 }], [])
+  const { rows } = sidebarWith(roster, {
+    status: new Map([['writer', { running: true }]]),
+    activity: { writer: 'working' },
+    work: { bots: { writer: { since: Date.now() - 5000, tool: 'bash' } }, waiting: {}, rooms: {}, approvals: [] },
+    live: { writer: { reply: { text: true } } },
+  })
+  const text = textOf(rowPreviews(rows[0], 'bt-tile-work')[0])
+  assert.match(text, /Replying…/)
+  assert.doesNotMatch(text, /Running shell commands/)
+})
+
+test('a group row names the member whose turn began last and counts the rest', () => {
+  const roster = teamFrom(
+    [{ id: 'alpha', name: 'Alpha', createdAt: 1 }, { id: 'beta', name: 'Beta', createdAt: 2 }],
+    [{ id: 'room', name: 'Team', members: ['alpha', 'beta'], createdAt: 3 }],
+  )
+  const { rows } = sidebarWith(roster, {
+    work: {
+      bots: {}, waiting: {}, approvals: [],
+      rooms: {
+        room: [
+          { botId: 'alpha', since: Date.now() - 31_000, tool: 'bash' },
+          { botId: 'beta', since: Date.now() - 8_400, tool: 'mcp__fatfish-social__generate_image' },
+        ],
+      },
+    },
+  })
+  const text = textOf(rowPreviews(rows.find(row => row.type.name === 'RoomRow'))[0])
+  assert.match(text, /^Beta · Generating an image… \+1/)
+  assert.match(text, /· 8s/)
+  assert.doesNotMatch(text, /Alpha|31s/)
+})
+
+test('a tool with no phrase reads by its MCP name, else says it is working', () => {
+  assert.equal(toolPhrase('bash'), 'Running shell commands')
+  assert.equal(toolPhrase('mcp__fatfish-social__social_draft'), 'social_draft')
+  assert.equal(toolPhrase('mcp__snowluma__qq_generate_image'), 'Generating an image')
+  assert.equal(toolPhrase('mystery_tool'), 'Working on it')
+})
+
+test('an idle Bot row keeps its message preview instead of a work line', () => {
+  const bot = { id: 'writer', name: 'Writer', createdAt: 1 }
+  const roster = teamFrom([bot], [])
+  const { rows } = sidebarWith(roster, {
+    work: { bots: { writer: { since: Date.now() - 12_000, tool: 'bash' } }, waiting: {}, rooms: {}, approvals: [] },
+  })
+  // The host still lists stale work, but the row's Session is not running: no line.
+  assert.deepEqual(rowPreviews(rows[0]), [])
+})
+
+test('any working Bot row, not only the Main Bot tile, carries the work line', () => {
+  const roster = teamFrom(
+    [{ id: 'chief', name: 'Chief', createdAt: 1 }, { id: 'writer', name: 'Writer', createdAt: 2 }],
+    [],
+  )
+  roster.prefs = { showBots: true }
+  const since = Date.now() - 5_400
+  const { rows } = sidebarWith(roster, {
+    status: new Map([['writer', { running: true }]]),
+    activity: { writer: 'working' },
+    work: { bots: { writer: { since, tool: 'mcp__snowluma__qq_generate_image' } }, waiting: {}, rooms: {}, approvals: [] },
+  })
+  const row = rows.find(entry => entry.type.name === 'BotRow' && entry.props.bot.id === 'writer')
+  const text = textOf(rowPreviews(row)[0])
+  assert.match(text, /Generating an image…/)
+  assert.match(text, /· 5s/)
+})
+
+test('the row clock follows the running call, not the turn that made it', () => {
+  const roster = teamFrom(
+    [{ id: 'chief', name: 'Chief', createdAt: 1 }, { id: 'writer', name: 'Writer', createdAt: 2 }],
+    [],
+  )
+  roster.prefs = { showBots: true }
+  const now = Date.now()
+  const { rows } = sidebarWith(roster, {
+    status: new Map([['writer', { running: true }]]),
+    activity: { writer: 'working' },
+    work: { bots: { writer: { since: now - 30_400, callSince: now - 6_400, tool: 'bash' } }, waiting: {}, rooms: {}, approvals: [] },
+  })
+  const row = rows.find(entry => entry.type.name === 'BotRow' && entry.props.bot.id === 'writer')
+  const text = textOf(rowPreviews(row)[0])
+  assert.match(text, /· 6s/)
+  assert.doesNotMatch(text, /· 30s/)
+})
+
+test('the group row switches to the member that started its tool last', () => {
+  const roster = teamFrom(
+    [{ id: 'alpha', name: 'Alpha', createdAt: 1 }, { id: 'beta', name: 'Beta', createdAt: 2 }],
+    [{ id: 'room', name: 'Team', members: ['alpha', 'beta'], createdAt: 3 }],
+  )
+  const now = Date.now()
+  const { rows } = sidebarWith(roster, {
+    work: {
+      bots: {}, waiting: {}, approvals: [],
+      rooms: {
+        room: [
+          // Alpha's turn began first but its current call is the newest work.
+          { botId: 'alpha', since: now - 40_000, callSince: now - 2_400, tool: 'bash' },
+          { botId: 'beta', since: now - 20_000, callSince: now - 20_000, tool: 'mcp__fatfish-social__generate_image' },
+        ],
+      },
+    },
+  })
+  const text = textOf(rowPreviews(rows.find(row => row.type.name === 'RoomRow'))[0])
+  assert.match(text, /^Alpha · Running shell commands… \+1/)
+  assert.match(text, /· 2s/)
 })

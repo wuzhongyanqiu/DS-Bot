@@ -216,7 +216,7 @@ export function install(rt) {
   const subagentDoingOf = (id) => {
     const active = [...(subagentsByParent.get(id)?.values() ?? [])].at(-1)
     if (active === undefined) return undefined
-    return { since: active.since, tool: 'subagent', ...(active.label ? { note: active.label.slice(0, 120) } : {}) }
+    return { since: active.since, callSince: active.since, tool: 'subagent', ...(active.label ? { note: active.label.slice(0, 120) } : {}) }
   }
 
   async function stopSubagents(sessionId) {
@@ -317,7 +317,7 @@ export function install(rt) {
     else if (entry.turn !== undefined) setActivity(id, 'thinking')
   }
   const startCall = (id, entry, callId, name, args) => {
-    if (typeof callId === 'string') (entry.calls ??= new Map()).set(callId, { name, args })
+    if (typeof callId === 'string') (entry.calls ??= new Map()).set(callId, { name, args, since: Date.now() })
     showCall(id, entry)
   }
   const endCall = (id, entry, callId) => {
@@ -454,7 +454,7 @@ export function install(rt) {
     let site
     try { site = url && new URL(url).host } catch { site = undefined }
     const target = path?.split(/[\\/]/).filter(Boolean).at(-1) ?? first(['query', 'pattern']) ?? site
-    return { tool: call.name, ...(said ? { said } : {}), ...(note ? { note: note.slice(0, 120) } : {}), ...(target ? { target: target.slice(0, 80) } : {}) }
+    return { tool: call.name, ...(call.since !== undefined ? { callSince: call.since } : {}), ...(said ? { said } : {}), ...(note ? { note: note.slice(0, 120) } : {}), ...(target ? { target: target.slice(0, 80) } : {}) }
   }
 
   // Per Bot, the turn it is running and what it is doing; its own chat wins over a

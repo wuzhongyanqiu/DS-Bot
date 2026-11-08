@@ -786,6 +786,9 @@ var ZH = {
   "Searching online": "上网搜索",
   "Reading a page": "阅读网页",
   "Running shell commands": "运行命令",
+  "Generating an image": "生成图片",
+  "Working on it": "工作中",
+  "Replying": "正在回复",
   "Opening a file": "打开文件",
   "Looking through files": "查找文件",
   "Writing changes": "写入修改",
@@ -3142,6 +3145,12 @@ body[data-bt-motion=quiet] .bt-mark[data-poke]{cursor:default}
 .bt-row-title{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bt-tag{flex:none;max-width:96px;font-size:12px;line-height:16px;font-weight:400;padding:1px 6px;border-radius:4px;background:var(--bt-tag-bg);color:var(--bt-tag-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bt-row-preview{font-size:13px;line-height:18px;color:var(--bt-ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bt-row-work{display:flex;align-items:baseline;min-width:0;max-width:100%}
+.bt-row-work>.bt-shimmer{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bt-row-time{flex:none;margin-left:6px;font-size:12px;line-height:18px;color:var(--bt-ink-3);font-variant-numeric:tabular-nums;white-space:nowrap}
+.bt-tile-work{display:flex;justify-content:center;max-width:84px;font-size:11px;line-height:15px;color:var(--bt-ink-3);overflow:hidden}
+.bt-tile-work>.bt-row-work{min-width:0;max-width:100%}
+.bt-tile-work .bt-row-time{margin-left:3px;font-size:11px;line-height:15px}
 .bt-unread{width:8px;height:8px;border-radius:50%;background:var(--bt-accent);flex:none;margin-right:2px;animation:bt-fade .13s cubic-bezier(.22,1,.36,1)}
 .bt-unread-wait{background:var(--bt-star)}
 /* Our own left column, portalled over the shell's collapsed sidebar. It reaches
@@ -14003,6 +14012,7 @@ var PHRASES = {
 };
 var TOOL_PHRASES = [
   [/^cua(_driver_native__|$)|^computer_/, "Using the computer"],
+  [/generate[_-]?image|image[_-]?generat/i, "Generating an image"],
   [/web_?search|search_?web/i, "Searching online"],
   [/fetch|browse|browser|web/i, "Reading a page"],
   [/shell|bash|pwsh|powershell|exec|command|terminal/i, "Running shell commands"],
@@ -14055,6 +14065,12 @@ function toolActivity(name, arg, findBot, self) {
       const phrase = TOOL_PHRASES.find(([pattern]) => pattern.test(name))?.[1];
       return { label: phrase ? t(phrase) : null, state: toolState(name) };
   }
+}
+function toolPhrase(name) {
+  const label = toolActivity(name, () => void 0, () => void 0)?.label;
+  if (label) return label;
+  const parts = String(name).split("__");
+  return parts.length >= 3 && parts[0] === "mcp" ? parts.slice(2).join("__") : t("Working on it");
 }
 function workPhrase(doing) {
   const { tool, said, note, target, switching, folder } = typeof doing === "string" ? { tool: doing } : doing ?? {};
@@ -14670,14 +14686,26 @@ var useGroupWork = (useWork, pick2) => {
   const raw = useWork ? useWork((work) => JSON.stringify(pick2(work.rooms ?? {}))) : "[]";
   return (0, import_react33.useMemo)(() => JSON.parse(raw), [raw]);
 };
-var doingOf = ({ tool, said, note, target, switching }) => ({ tool, said, note, target, switching });
-var workLine = (lead, doing, more) => (0, import_react33.createElement)(Shimmer, null, `${lead} · ${workPhrase(doing)}…${more > 0 ? ` +${more}` : ""}`);
-var doingLine = (doing) => (0, import_react33.createElement)(Shimmer, null, `${workPhrase(doing)}…`);
+var doingOf = ({ tool, said, note, target, switching, since, callSince }) => ({ tool, said, note, target, switching, since, callSince });
+var latestOf = (entries2) => entries2.reduce((best, entry) => best === void 0 || (entry.callSince ?? entry.since ?? 0) > (best.callSince ?? best.since ?? 0) ? entry : best, void 0);
+var doingPhrase = (doing) => {
+  if (typeof doing === "string") return toolPhrase(doing);
+  if (doing?.switching) return workPhrase(doing);
+  return doing?.tool ? toolPhrase(doing.tool) : t("Thinking about it");
+};
+var rowClock = (at) => Number.isFinite(at) ? (0, import_react33.createElement)(Elapsed, { at, className: "bt-row-time" }) : null;
+var workLine = (lead, doing, more = 0, at = doing?.callSince ?? doing?.since, streaming = false) => (0, import_react33.createElement)(
+  "span",
+  { className: "bt-row-work" },
+  (0, import_react33.createElement)(Shimmer, null, `${lead ? `${lead} · ` : ""}${streaming ? t("Replying") : doingPhrase(doing)}…${more > 0 ? ` +${more}` : ""}`),
+  rowClock(at)
+);
+var useStreaming = (useLive, sessionId) => useLive ? useLive((state) => Object.values(state[sessionId] ?? {}).some((entry) => entry?.text === true)) : false;
 var waitingFor = (roster, waits) => {
   const names = [...(waits?.bots ?? []).map((id) => roster.byId[id]?.name), ...(waits?.rooms ?? []).map((id) => roster.roomsById[id]?.name)].filter(Boolean);
   return names.length === 0 ? "" : t("Waiting for {names}", { names: names.join(t(" and ")) });
 };
-function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessionRetainInfo, useActivity, useWork, wide, marked }) {
+function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessionRetainInfo, useActivity, useWork, useLive, wide, marked }) {
   const id = bot.id;
   const part = currentPart(bot);
   const preview = useSessions((list) => previewOf(list, part, roster.exchangeTurns[part]));
@@ -14690,11 +14718,15 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
   const approval = useApproval(useWork, (entry) => entry.botId === id);
   const alert = roster.questions?.[part] !== void 0 || approval;
   const doing = useActivity((map) => map[id]);
+  const streaming = useStreaming(useLive, part);
+  const ownRaw = useWork ? useWork((work) => JSON.stringify({ doing: work.bots?.[id]?.roomId === void 0 ? work.bots?.[id] ?? null : null, at: work.turns?.[part] ?? 0 })) : '{"doing":null,"at":0}';
+  const own = (0, import_react33.useMemo)(() => JSON.parse(ownRaw), [ownRaw]);
   const groups = useGroupWork(useWork, (rooms) => Object.entries(rooms).flatMap(([roomId, entries2]) => entries2.filter((entry) => entry.botId === id).map((entry) => ({ id: roomId, ...doingOf(entry) }))));
-  const away = !running && groups.length > 0;
+  const awayWork = latestOf(groups);
+  const away = !running && awayWork !== void 0;
   const state = botState(running || away, doing, alert);
-  const runningLine = running && doing ? doingLine(doing) : null;
-  const awayLine = away ? workLine(roster.roomsById[groups[0].id]?.name ?? t("a group chat"), groups[0], groups.length - 1) : null;
+  const runningLine = running ? workLine(void 0, own?.doing ?? doing ?? {}, 0, own?.doing?.callSince ?? own?.doing?.since ?? (own?.at > 0 ? own.at : void 0), streaming) : null;
+  const awayLine = away ? workLine(roster.roomsById[awayWork.id]?.name ?? t("a group chat"), awayWork, groups.length - 1, awayWork.callSince ?? awayWork.since) : null;
   const waitsRaw = useWork ? useWork((work) => JSON.stringify(work.waiting?.[id] ?? null)) : "null";
   const waits = (0, import_react33.useMemo)(() => JSON.parse(waitsRaw), [waitsRaw]);
   const waitsFor = state === "waiting" ? waitingFor(roster, waits) : "";
@@ -14720,7 +14752,8 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
       },
       (0, import_react33.createElement)(BotAvatar, { bot, size: 60, state, main: true }),
       (0, import_react33.createElement)("span", { className: "bt-tile-name" }, bot.name),
-      bot.role ? (0, import_react33.createElement)("span", { className: "bt-chip" }, bot.role) : null
+      bot.role ? (0, import_react33.createElement)("span", { className: "bt-chip" }, bot.role) : null,
+      runningLine || awayLine ? (0, import_react33.createElement)("span", { className: "bt-tile-work" }, runningLine ?? awayLine) : null
     ));
   }
   return (0, import_react33.createElement)(
@@ -14747,7 +14780,7 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
     wide && unread && !active ? (0, import_react33.createElement)("span", { className: "bt-unread", "aria-hidden": true }) : !wide && !active && (alert || unread) ? (0, import_react33.createElement)("span", { className: `bt-dot${alert ? " bt-dot-wait" : ""}`, "aria-hidden": true }) : null
   );
 }
-function RoomRow({ room: room2, roster, actions, useSessions, useSessionStatus, useSessionRetainInfo, useWork, wide, marked }) {
+function RoomRow({ room: room2, roster, actions, useSessions, useSessionStatus, useSessionRetainInfo, useWork, useLive, wide, marked }) {
   const id = room2.id;
   const sessionId = room2.sessionId ?? id;
   const fallback = useSessions((list) => previewOf(list, sessionId));
@@ -14757,8 +14790,10 @@ function RoomRow({ room: room2, roster, actions, useSessions, useSessionStatus, 
   useMarkedUnread(id, active, marked, actions);
   const approval = useApproval(useWork, (entry) => entry.roomId === id);
   const members = useGroupWork(useWork, (rooms) => (rooms[id] ?? []).filter((entry) => entry.botId !== void 0).map((entry) => ({ id: entry.botId, ...doingOf(entry) })));
-  const first = roster.byId[members[0]?.id];
-  const workingLine = first ? workLine(first.name, members[0], members.length - 1) : null;
+  const streaming = useStreaming(useLive, sessionId);
+  const current = latestOf(members);
+  const first = roster.byId[current?.id];
+  const workingLine = first ? workLine(first.name, current, members.length - 1, current.callSince ?? current.since, streaming) : null;
   if (room2.hidden && !active) return null;
   const pinned = room2.pinned === true;
   const label = [room2.name, pinned ? t("Pinned") : "", members.length > 0 ? t("Working") : "", approval ? t("Waiting for your approval") : ""].filter(Boolean).join(", ");
@@ -15196,7 +15231,7 @@ function TeamSidebar(props) {
     openAgentSession: (id) => navigate(actions.openAgentSession, id),
     newAgentSession: (id) => navigate(actions.newAgentSession, id)
   };
-  const rowProps = { roster, actions: rowActions, useSessions, useUi, useSessionStatus: props.useSessionStatus, useSessionRetainInfo: props.useSessionRetainInfo, useActivity: props.useActivity, useWork: props.useWork, wide: wideContent };
+  const rowProps = { roster, actions: rowActions, useSessions, useUi, useSessionStatus: props.useSessionStatus, useSessionRetainInfo: props.useSessionRetainInfo, useActivity: props.useActivity, useWork: props.useWork, useLive: props.useLive, wide: wideContent };
   const typeToSearch = (event) => {
     if (event.defaultPrevented || event.key.length !== 1 || event.key === " " || event.metaKey || event.ctrlKey || event.altKey || event.nativeEvent.isComposing) return;
     if (event.target instanceof Element && event.target.closest("input,textarea,[contenteditable]")) return;

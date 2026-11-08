@@ -148,6 +148,12 @@ body[data-bt-motion=quiet] .bt-mark[data-poke]{cursor:default}
 .bt-row-title{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bt-tag{flex:none;max-width:96px;font-size:12px;line-height:16px;font-weight:400;padding:1px 6px;border-radius:4px;background:var(--bt-tag-bg);color:var(--bt-tag-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bt-row-preview{font-size:13px;line-height:18px;color:var(--bt-ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bt-row-work{display:flex;align-items:baseline;min-width:0;max-width:100%}
+.bt-row-work>.bt-shimmer{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bt-row-time{flex:none;margin-left:6px;font-size:12px;line-height:18px;color:var(--bt-ink-3);font-variant-numeric:tabular-nums;white-space:nowrap}
+.bt-tile-work{display:flex;justify-content:center;max-width:84px;font-size:11px;line-height:15px;color:var(--bt-ink-3);overflow:hidden}
+.bt-tile-work>.bt-row-work{min-width:0;max-width:100%}
+.bt-tile-work .bt-row-time{margin-left:3px;font-size:11px;line-height:15px}
 .bt-unread{width:8px;height:8px;border-radius:50%;background:var(--bt-accent);flex:none;margin-right:2px;animation:bt-fade .13s cubic-bezier(.22,1,.36,1)}
 .bt-unread-wait{background:var(--bt-star)}
 /* Our own left column, portalled over the shell's collapsed sidebar. It reaches

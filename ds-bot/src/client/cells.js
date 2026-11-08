@@ -849,6 +849,7 @@ export const PHRASES = {
 }
 const TOOL_PHRASES = [
   [/^cua(_driver_native__|$)|^computer_/, 'Using the computer'],
+  [/generate[_-]?image|image[_-]?generat/i, 'Generating an image'],
   [/web_?search|search_?web/i, 'Searching online'],
   [/fetch|browse|browser|web/i, 'Reading a page'],
   [/shell|bash|pwsh|powershell|exec|command|terminal/i, 'Running shell commands'],
@@ -889,6 +890,16 @@ function toolActivity(name, arg, findBot, self) {
       const phrase = TOOL_PHRASES.find(([pattern]) => pattern.test(name))?.[1]
       return { label: phrase ? t(phrase) : null, state: toolState(name) }
   }
+}
+
+// A running call's short name for a line that has room for one tool only. An MCP tool
+// keeps the name after its server (`mcp__server__tool`), which a person can read; a
+// tool with no phrase and no MCP name still says it is working.
+export function toolPhrase(name) {
+  const label = toolActivity(name, () => undefined, () => undefined)?.label
+  if (label) return label
+  const parts = String(name).split('__')
+  return parts.length >= 3 && parts[0] === 'mcp' ? parts.slice(2).join('__') : t('Working on it')
 }
 
 // What a Bot busy elsewhere is doing: what it said in the step it is on, its running
