@@ -8,7 +8,7 @@ import { build } from 'esbuild'
 const PLUGIN = dirname(dirname(fileURLToPath(import.meta.url)))
 const { outputFiles } = await build({
   stdin: {
-    contents: "export { WhaleButton, WhaleRun, WhaleStatusBar, WhaleActions, diarySummary, filterRuns, whaleStatusChips, resultLabel } from './src/client/whale.js'",
+    contents: "export { WhaleButton, WhaleRun, WhaleStatusBar, WhaleActions, actionNotice, diarySummary, filterRuns, whaleStatusChips, resultLabel } from './src/client/whale.js'",
     resolveDir: PLUGIN,
   },
   bundle: true, format: 'cjs', platform: 'browser', write: false, logLevel: 'silent',
@@ -22,7 +22,7 @@ const react = {
 const sandbox = { module: { exports: {} }, require: name => (name === 'react' ? react : {}), window: { addEventListener() {}, removeEventListener() {} } }
 sandbox.exports = sandbox.module.exports
 runInNewContext(outputFiles[0].text, sandbox)
-const { WhaleButton, WhaleRun, WhaleStatusBar, WhaleActions, diarySummary, filterRuns, whaleStatusChips, resultLabel } = sandbox.module.exports
+const { WhaleButton, WhaleRun, WhaleStatusBar, WhaleActions, actionNotice, diarySummary, filterRuns, whaleStatusChips, resultLabel } = sandbox.module.exports
 
 const expand = (node) => {
   if (Array.isArray(node)) return node.map(expand)
@@ -92,14 +92,28 @@ test('the range filter keeps today, the last seven days, or everything', () => {
   assert.equal(filterRuns(runs, 'all', now).length, 4)
 })
 
-test('the board buttons stay disabled until the bridge supplies actions', () => {
-  const actions = expand(WhaleActions({ disabled: true }))
+test('the board buttons call the bridge through the host and wait while busy', () => {
+  const calls = []
+  const actions = expand(WhaleActions({ busy: 'pause', onAction: key => calls.push(key) }))
   const buttons = actions.props.children.flat()
-  assert.equal(buttons.length, 4)
+  assert.equal(buttons.length, 3)
   assert.ok(buttons.every(button => button.props.disabled === true))
+  const idle = expand(WhaleActions({ busy: null, onAction: key => calls.push(key) }))
+  const idleButtons = idle.props.children.flat()
+  assert.ok(idleButtons.every(button => button.props.disabled === false))
+  idleButtons[2].props.onClick()
+  assert.deepEqual(calls, ['wake'])
   const opened = []
   const button = WhaleButton({ actions: { openWhale: () => opened.push(true) } })
   button.props.onClick()
   assert.equal(opened.length, 1)
   assert.equal(resultLabel('skipped'), 'Skipped')
+})
+
+test('a 429 answer becomes the remaining seconds, not a generic failure', () => {
+  assert.equal(actionNotice({ ok: false, code: 'whale/rate-limited', retryAfterSec: 42 }, 'wake'), 'Wait 42 seconds')
+  assert.equal(actionNotice({ ok: true }, 'pause'), 'Paused')
+  assert.equal(actionNotice({ ok: true }, 'resume'), 'Resumed')
+  assert.equal(actionNotice({ ok: true }, 'wake'), 'Woke it once')
+  assert.equal(actionNotice({ ok: false, error: '桥拒绝' }, 'pause'), '桥拒绝')
 })

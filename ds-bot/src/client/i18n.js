@@ -63,6 +63,11 @@ const ZH = {
   // Sidebar and account menu
   'Bot list': 'Bot 列表',
   'Big Fish board': '大肥鱼看板',
+  'Resume the wake loop': '恢复',
+  'Resumed': '已恢复',
+  'Woke it once': '已叫醒一轮',
+  'Wait {seconds} seconds': '还要等 {seconds} 秒',
+  'The bridge refused the action': 'QQ 桥拒绝了这次操作',
   'Close Big Fish board': '关闭大肥鱼看板',
   'Last 7 days': '近 7 天',
   'Range': '时间范围',

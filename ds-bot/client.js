@@ -99,6 +99,11 @@ var ZH = {
   // Sidebar and account menu
   "Bot list": "Bot 列表",
   "Big Fish board": "大肥鱼看板",
+  "Resume the wake loop": "恢复",
+  "Resumed": "已恢复",
+  "Woke it once": "已叫醒一轮",
+  "Wait {seconds} seconds": "还要等 {seconds} 秒",
+  "The bridge refused the action": "QQ 桥拒绝了这次操作",
   "Close Big Fish board": "关闭大肥鱼看板",
   "Last 7 days": "近 7 天",
   "Range": "时间范围",
@@ -15093,25 +15098,37 @@ function WhaleRun({ run: run2 }) {
     run2.resultDetail ? (0, import_react34.createElement)("p", { className: "bt-whale-detail" }, run2.resultDetail) : null
   );
 }
-function WhaleActions({ disabled }) {
+function WhaleActions({ disabled, busy = null, onAction }) {
   const rows2 = [
-    ["Pause 1 hour", "pause1h"],
-    ["Pause today", "pauseToday"],
-    ["Pause until resumed", "pause"],
+    ["Pause", "pause"],
+    ["Resume the wake loop", "resume"],
     ["Wake now", "wake"]
   ];
   return (0, import_react34.createElement)("div", { className: "bt-whale-ops" }, rows2.map(([label, key]) => (0, import_react34.createElement)("button", {
     key,
     type: "button",
     className: "bt-whale-op",
-    disabled,
-    title: disabled ? t("Waiting for the QQ bridge actions") : void 0
+    disabled: disabled || busy !== null,
+    "data-busy": busy === key || void 0,
+    title: disabled ? t("Waiting for the QQ bridge actions") : void 0,
+    onClick: () => onAction?.(key)
   }, t(label))));
+}
+function actionNotice(value, kind) {
+  if (value?.ok === false) {
+    if (Number.isFinite(value.retryAfterSec) && value.retryAfterSec > 0) return t("Wait {seconds} seconds", { seconds: value.retryAfterSec });
+    return value.error || t("The bridge refused the action");
+  }
+  if (kind === "wake") return t("Woke it once");
+  if (kind === "resume") return t("Resumed");
+  return t("Paused");
 }
 function WhalePanel({ actions, leaving = false }) {
   const [range, setRange] = (0, import_react34.useState)("today");
   const [data, setData] = (0, import_react34.useState)({ loading: true, available: false, reason: "", status: null, runs: [], updatedAt: null });
   const [error, setError] = (0, import_react34.useState)("");
+  const [busy, setBusy] = (0, import_react34.useState)(null);
+  const [notice, setNotice] = (0, import_react34.useState)("");
   const alive = (0, import_react34.useRef)(true);
   const abort = (0, import_react34.useRef)(null);
   const close = () => actions.closeWhale?.();
@@ -15152,6 +15169,21 @@ function WhalePanel({ actions, leaving = false }) {
   }, []);
   const visible = (0, import_react34.useMemo)(() => filterRuns(data.runs, range), [data.runs, range]);
   const updated = data.updatedAt ? runClock(data.updatedAt) : "";
+  const act = async (kind) => {
+    if (busy !== null) return;
+    setBusy(kind);
+    setNotice("");
+    try {
+      const value = kind === "wake" ? await actions.whaleWake?.() : await actions.whalePause?.(kind);
+      if (!alive.current) return;
+      setNotice(actionNotice(value, kind));
+      if (value?.ok !== false) void load();
+    } catch (failure) {
+      if (alive.current) setNotice(String(failure?.message ?? failure));
+    } finally {
+      if (alive.current) setBusy(null);
+    }
+  };
   return (0, import_react34.createElement)(
     "div",
     { className: "bt-whale-layer", "data-leaving": leaving || void 0 },
@@ -15189,7 +15221,10 @@ function WhalePanel({ actions, leaving = false }) {
             "aria-pressed": range === entry.key,
             onClick: () => setRange(entry.key)
           }, t(entry.label)))),
-          (0, import_react34.createElement)(WhaleActions, { disabled: true }),
+          (0, import_react34.createElement)(WhaleActions, { disabled: false, busy, onAction: (kind) => {
+            void act(kind);
+          } }),
+          notice ? (0, import_react34.createElement)("p", { className: "bt-whale-notice", role: "status" }, notice) : null,
           data.loading ? (0, import_react34.createElement)("p", { className: "bt-whale-empty" }, t("Loading…")) : visible.length === 0 ? (0, import_react34.createElement)("p", { className: "bt-whale-empty" }, t("No wake records")) : (0, import_react34.createElement)("ul", { className: "bt-whale-runs" }, visible.map((run2) => (0, import_react34.createElement)(WhaleRun, { key: run2.id, run: run2 })))
         )
       )
@@ -15221,6 +15256,8 @@ var WHALE_CSS = `
 .bt-whale-ops{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px}
 .bt-whale-op{border:.5px solid var(--bt-line-2);border-radius:6px;background:var(--bt-main);color:var(--bt-ink-3);font:inherit;font-size:11px;line-height:20px;padding:1px 8px;cursor:not-allowed}
 .bt-whale-op:disabled{opacity:.55}
+.bt-whale-op[data-busy]{color:var(--bt-ink-2);border-color:var(--bt-line)}
+.bt-whale-notice{margin:0 0 10px;padding:6px 8px;border-radius:6px;background:var(--bt-tag-bg);color:var(--bt-ink-2);font-size:11px;line-height:16px}
 .bt-whale-runs{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
 .bt-whale-run{padding:9px 10px;border:.5px solid var(--bt-line);border-radius:10px;background:color-mix(in srgb,var(--bt-card) 60%,transparent)}
 .bt-whale-run-head{display:flex;align-items:center;gap:8px;min-width:0;color:var(--bt-ink-3);font-size:11px;line-height:16px;font-variant-numeric:tabular-nums}
@@ -28212,6 +28249,8 @@ function apply(ctx) {
     openJobs: () => ui2.set((state) => state.jobs ? state : { ...state, jobs: true }),
     openWhale: () => ui2.set((state) => state.whale ? state : { ...state, whale: true }),
     closeWhale: () => ui2.set((state) => state.whale ? { ...state, whale: false } : state),
+    whalePause: (mode) => call("whale-pause", { mode }),
+    whaleWake: () => call("whale-wake"),
     closeJobs: () => ui2.set((state) => state.jobs ? { ...state, jobs: false } : state),
     dismissJob: (id) => ui2.set((state) => state.jobsDismissed?.[id] ? state : { ...state, jobsDismissed: { ...state.jobsDismissed, [id]: true } }),
     observeJob: (sessionId, id) => jobService?.observe(sessionId, id) ?? (() => {

@@ -105,24 +105,38 @@ export function WhaleRun({ run }) {
     run.resultDetail ? h('p', { className: 'bt-whale-detail' }, run.resultDetail) : null)
 }
 
-export function WhaleActions({ disabled }) {
+export function WhaleActions({ disabled, busy = null, onAction }) {
+  // The bridge owns two states (pause/resume) and the wake gate. It has no 1-hour
+  // or rest-of-day pause, so the board does not pretend it does.
   const rows = [
-    ['Pause 1 hour', 'pause1h'],
-    ['Pause today', 'pauseToday'],
-    ['Pause until resumed', 'pause'],
+    ['Pause', 'pause'],
+    ['Resume the wake loop', 'resume'],
     ['Wake now', 'wake'],
   ]
   return h('div', { className: 'bt-whale-ops' }, rows.map(([label, key]) =>
     h('button', {
-      key, type: 'button', className: 'bt-whale-op', disabled,
+      key, type: 'button', className: 'bt-whale-op', disabled: disabled || busy !== null, 'data-busy': busy === key || undefined,
       title: disabled ? t('Waiting for the QQ bridge actions') : undefined,
+      onClick: () => onAction?.(key),
     }, t(label))))
+}
+
+export function actionNotice(value, kind) {
+  if (value?.ok === false) {
+    if (Number.isFinite(value.retryAfterSec) && value.retryAfterSec > 0) return t('Wait {seconds} seconds', { seconds: value.retryAfterSec })
+    return value.error || t('The bridge refused the action')
+  }
+  if (kind === 'wake') return t('Woke it once')
+  if (kind === 'resume') return t('Resumed')
+  return t('Paused')
 }
 
 export function WhalePanel({ actions, leaving = false }) {
   const [range, setRange] = useState('today')
   const [data, setData] = useState({ loading: true, available: false, reason: '', status: null, runs: [], updatedAt: null })
   const [error, setError] = useState('')
+  const [busy, setBusy] = useState(null)
+  const [notice, setNotice] = useState('')
   const alive = useRef(true)
   const abort = useRef(null)
   const close = () => actions.closeWhale?.()
@@ -160,6 +174,21 @@ export function WhalePanel({ actions, leaving = false }) {
   }, [])
   const visible = useMemo(() => filterRuns(data.runs, range), [data.runs, range])
   const updated = data.updatedAt ? runClock(data.updatedAt) : ''
+  const act = async (kind) => {
+    if (busy !== null) return
+    setBusy(kind)
+    setNotice('')
+    try {
+      const value = kind === 'wake' ? await actions.whaleWake?.() : await actions.whalePause?.(kind)
+      if (!alive.current) return
+      setNotice(actionNotice(value, kind))
+      if (value?.ok !== false) void load()
+    } catch (failure) {
+      if (alive.current) setNotice(String(failure?.message ?? failure))
+    } finally {
+      if (alive.current) setBusy(null)
+    }
+  }
   return h('div', { className: 'bt-whale-layer', 'data-leaving': leaving || undefined },
     h('div', { className: 'bt-scrim', onMouseDown: close }),
     h('div', { className: 'bt-whale', role: 'dialog', 'aria-modal': true, 'aria-label': t('Big Fish board') },
@@ -181,7 +210,8 @@ export function WhalePanel({ actions, leaving = false }) {
                 key: entry.key, type: 'button', className: 'bt-whale-range', 'aria-pressed': range === entry.key,
                 onClick: () => setRange(entry.key),
               }, t(entry.label)))),
-            h(WhaleActions, { disabled: true }),
+            h(WhaleActions, { disabled: false, busy, onAction: kind => { void act(kind) } }),
+            notice ? h('p', { className: 'bt-whale-notice', role: 'status' }, notice) : null,
             data.loading
               ? h('p', { className: 'bt-whale-empty' }, t('Loading…'))
               : visible.length === 0
@@ -214,6 +244,8 @@ export const WHALE_CSS = `
 .bt-whale-ops{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 12px}
 .bt-whale-op{border:.5px solid var(--bt-line-2);border-radius:6px;background:var(--bt-main);color:var(--bt-ink-3);font:inherit;font-size:11px;line-height:20px;padding:1px 8px;cursor:not-allowed}
 .bt-whale-op:disabled{opacity:.55}
+.bt-whale-op[data-busy]{color:var(--bt-ink-2);border-color:var(--bt-line)}
+.bt-whale-notice{margin:0 0 10px;padding:6px 8px;border-radius:6px;background:var(--bt-tag-bg);color:var(--bt-ink-2);font-size:11px;line-height:16px}
 .bt-whale-runs{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
 .bt-whale-run{padding:9px 10px;border:.5px solid var(--bt-line);border-radius:10px;background:color-mix(in srgb,var(--bt-card) 60%,transparent)}
 .bt-whale-run-head{display:flex;align-items:center;gap:8px;min-width:0;color:var(--bt-ink-3);font-size:11px;line-height:16px;font-variant-numeric:tabular-nums}

@@ -147,6 +147,8 @@ export function createTeam() {
     },
     openWhale: () => ui.set(state => (state.whale ? state : { ...state, whale: true })),
     closeWhale: () => ui.set(state => (state.whale ? { ...state, whale: false } : state)),
+    whalePause: mode => call('whale-pause', { mode }),
+    whaleWake: () => call('whale-wake'),
     landOn: id => show(partFor(id)),
     toggleSidebar: () => layout.set(state => ({ ...state, wide: !state.wide })),
     markUnread: id => writeUnread(id, true),

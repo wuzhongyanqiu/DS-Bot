@@ -619,6 +619,8 @@ export function apply(ctx) {
     openJobs: () => ui.set(state => (state.jobs ? state : { ...state, jobs: true })),
     openWhale: () => ui.set(state => (state.whale ? state : { ...state, whale: true })),
     closeWhale: () => ui.set(state => (state.whale ? { ...state, whale: false } : state)),
+    whalePause: mode => call('whale-pause', { mode }),
+    whaleWake: () => call('whale-wake'),
     closeJobs: () => ui.set(state => (state.jobs ? { ...state, jobs: false } : state)),
     dismissJob: (id) => ui.set(state => (state.jobsDismissed?.[id] ? state : { ...state, jobsDismissed: { ...state.jobsDismissed, [id]: true } })),
     observeJob: (sessionId, id) => jobService?.observe(sessionId, id) ?? (() => {}),

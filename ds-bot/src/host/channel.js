@@ -685,6 +685,12 @@ export function install(rt) {
           return ok(await rt.whaleStatus())
         case 'whale-runs':
           return ok(await rt.whaleRuns())
+        // Human controls for the Big Fish loop: the host forwards to the bridge with
+        // its console token. A 429 keeps the remaining seconds as data, not an error.
+        case 'whale-pause':
+          return ok(await rt.whalePause(body.mode))
+        case 'whale-wake':
+          return ok(await rt.whaleWake())
         case 'diagnostics':
           await rt.load()
           return ok(await rt.diagnostics.report(body))

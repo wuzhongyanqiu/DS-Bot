@@ -5,7 +5,8 @@
 // 或 `DS_BOT_WHALE_STATE` 改路径）；桥那边的写入格式由引川按同一形状落盘。
 // 读失败一律返回 `available: false`，不猜数据、不把半份状态画成完整状态。
 import { readFile, stat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { homedir } from 'node:os'
+import { join, resolve } from 'node:path'
 
 const MAX_BYTES = 2 * 1024 * 1024
 const MAX_RUNS = 300
@@ -105,6 +106,54 @@ export async function readWhaleSnapshot(file) {
   return normalized === null ? unavailable('快照格式不认识') : { available: true, ...normalized }
 }
 
+const DEFAULT_BRIDGE = 'http://127.0.0.1:3100'
+const DEFAULT_TOKEN = join(homedir(), 'Documents', 'advanced_research', 'dsh-qq', 'state', 'console-token')
+
+export const whaleBridgeOf = (rt) => {
+  const configured = rt.config?.whaleBridgeUrl ?? process.env.DS_BOT_WHALE_BRIDGE
+  return typeof configured === 'string' && configured.trim() !== '' ? configured.replace(/\/+$/, '') : DEFAULT_BRIDGE
+}
+export const whaleConsoleTokenPathOf = (rt) => {
+  const configured = rt.config?.whaleConsoleTokenPath ?? process.env.DS_BOT_WHALE_CONSOLE_TOKEN
+  return typeof configured === 'string' && configured.trim() !== '' ? resolve(configured) : DEFAULT_TOKEN
+}
+const consoleToken = async (rt) => {
+  try { return (await readFile(whaleConsoleTokenPathOf(rt), 'utf8')).trim() } catch { return '' }
+}
+const retrySecondsOf = (json) => {
+  const direct = Number(json?.retryAfterSec ?? json?.retryAfter)
+  if (Number.isFinite(direct) && direct > 0) return Math.ceil(direct)
+  const match = /(\d+)\s*秒/.exec(String(json?.error ?? ''))
+  return match ? Number(match[1]) : 300
+}
+const sumWakes = windows => (Array.isArray(windows) ? windows.reduce((total, window) => total + (Number(window?.wakes) || 0), 0) : 0)
+
+// One POST to the QQ bridge. The token is read per request, never logged, and a
+// bridge that is down, slow, or refuses is a typed answer rather than an exception.
+export async function postWhaleBridge({ base, token, path, body, fetchImpl = fetch, timeoutMs = 20_000 }) {
+  if (token === '') return { ok: false, error: '控制台令牌不可读，未发送请求' }
+  try {
+    const response = await fetchImpl(`${base}${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-console-token': token },
+      body: JSON.stringify(body ?? {}),
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+    let json = null
+    try { json = await response.json() } catch {}
+    if (response.status === 429) {
+      return { ok: false, code: 'whale/rate-limited', retryAfterSec: retrySecondsOf(json), error: json?.error ?? '叫醒太频繁' }
+    }
+    if (!response.ok || json?.ok === false) {
+      return { ok: false, error: json?.error ?? `QQ 桥返回 HTTP ${response.status}` }
+    }
+    return { ok: true, value: json ?? {} }
+  } catch (error) {
+    if (error?.name === 'TimeoutError' || error?.name === 'AbortError') return { ok: false, error: 'QQ 桥没有响应' }
+    return { ok: false, error: String(error?.message ?? error) }
+  }
+}
+
 export function install(rt) {
   const file = () => whaleStatePathOf(rt)
   rt.whaleStatus = async () => {
@@ -116,5 +165,22 @@ export function install(rt) {
     const snapshot = await readWhaleSnapshot(file())
     if (!snapshot.available) return snapshot
     return { available: true, updatedAt: snapshot.updatedAt, runs: snapshot.runs }
+  }
+  // The bridge owns the pause/resume state and the 5-minute wake gate; this host
+  // only forwards, with the console token.
+  rt.whalePause = async (mode) => {
+    const action = mode === 'resume' ? 'resume' : 'pause'
+    const token = await consoleToken(rt)
+    const result = await postWhaleBridge({ base: whaleBridgeOf(rt), token, path: '/api/whale/pause', body: { mode: action } })
+    if (!result.ok) return result
+    const value = result.value ?? {}
+    const windows = Array.isArray(value.windows) ? value.windows : []
+    return { ok: true, mode: action, wakes: Number.isFinite(Number(value.wakes)) ? Number(value.wakes) : sumWakes(windows), windows }
+  }
+  rt.whaleWake = async () => {
+    const token = await consoleToken(rt)
+    const result = await postWhaleBridge({ base: whaleBridgeOf(rt), token, path: '/api/whale/wake', body: {} })
+    if (!result.ok) return result
+    return { ok: true, accepted: result.value?.accepted ?? null }
   }
 }
