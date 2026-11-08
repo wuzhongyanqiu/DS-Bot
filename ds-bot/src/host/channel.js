@@ -54,7 +54,16 @@ export function install(rt) {
     rooms: Object.values(state.rooms).map(({ log, seen, paused, sessions, segments, parts: ownParts, ...room }) => {
       const parts = [...Object.values(sessions ?? {}), ...Object.values(segments ?? {}).flat().map(segment => segment.sessionId), ...(ownParts ?? []).map(segment => segment.sessionId)]
       const last = (log ?? []).filter(line => line.kind === undefined).at(-1)
-      return { ...room, sessionId: rt.sessionOfRoom(room), ownParts: (ownParts ?? []).map(segment => segment.sessionId), parts, ...(last ? { preview: last.who === 'User' ? last.text : `${last.who}：${last.text}` } : {}) }
+      return {
+        ...room,
+        // The members' group Sessions, so the client can watch the background jobs
+        // each member owns there; `parts` alone loses which member a Session belongs to.
+        ...(sessions && Object.keys(sessions).length > 0 ? { sessions } : {}),
+        sessionId: rt.sessionOfRoom(room),
+        ownParts: (ownParts ?? []).map(segment => segment.sessionId),
+        parts,
+        ...(last ? { preview: last.who === 'User' ? last.text : `${last.who}：${last.text}` } : {}),
+      }
     }),
     // Deleted private Bots whose folder, memory and chats stay closed to the others.
     privateArchives: rt.archivesView(),

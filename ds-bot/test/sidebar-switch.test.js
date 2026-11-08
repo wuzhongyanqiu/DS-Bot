@@ -594,7 +594,7 @@ test('TeamSidebar subscribes to specific ui slices rather than the whole ui obje
 
 // Bots stay off the sidebar until the user turns them on; group chats and Agent
 // rows keep their places, and an empty list says what to do rather than going blank.
-function sidebarWith(roster, { pref, status, activity = {}, work = { waiting: {}, rooms: {}, approvals: [] }, live = {} } = {}) {
+function sidebarWith(roster, { pref, status, activity = {}, work = { waiting: {}, rooms: {}, approvals: [] }, live = {}, jobs } = {}) {
   viewport.innerWidth = 1280
   const rows = []
   const hints = []
@@ -612,6 +612,7 @@ function sidebarWith(roster, { pref, status, activity = {}, work = { waiting: {}
     useSidebarPref: pref ? pick => pick(pref) : undefined,
     useSessionStatus: pick => pick(status ?? new Map()), useSessionRetainInfo: () => null,
     useActivity: pick => pick(activity), useWork: pick => pick(work), useLive: pick => pick(live),
+    useJobs: jobs ? pick => pick(jobs) : undefined,
   }))
   return { rows, hints }
 }
@@ -837,3 +838,45 @@ test('the group row switches to the member that started its tool last', () => {
   assert.match(text, /^Alpha · Running shell commands… \+1/)
   assert.match(text, /· 2s/)
 })
+
+test('a Bot row and a group row carry their own live background count', () => {
+  const roster = teamFrom(
+    [{ id: 'chief', name: 'Chief', createdAt: 1 }, { id: 'writer', name: 'Writer', createdAt: 2 }],
+    [{ id: 'room', name: 'Ops', members: ['chief', 'writer'], sessions: { writer: 'group-writer' }, createdAt: 3 }],
+  )
+  roster.prefs = { showBots: true }
+  const job = (id, status) => ({ id, kind: 'bash', label: id, status, startedAt: Date.now() - 5_000, output: { total: 0, earliest: 0 } })
+  const jobs = {
+    ready: true,
+    observed: {},
+    rows: {
+      writer: [job('chat-job', 'running')],
+      'group-writer': [job('group-job', 'running'), job('group-done', 'completed')],
+      'room': [job('room-job', 'stopping')],
+    },
+  }
+  const { rows } = sidebarWith(roster, { jobs })
+  const writer = rows.find(entry => entry.type.name === 'BotRow' && entry.props.bot.id === 'writer')
+  const room = rows.find(entry => entry.type.name === 'RoomRow')
+  assert.equal(textOf(collectBadges(writer).map(textOf).join('')), 'Jobs 1')
+  // The group counts its own Session and the member's group Session, live only.
+  assert.equal(textOf(collectBadges(room).map(textOf).join('')), 'Jobs 2')
+})
+
+function collectBadges(row) {
+  const expand = (node) => {
+    if (Array.isArray(node)) return node.map(expand)
+    if (!node || typeof node !== 'object') return node
+    if (typeof node.type === 'function') return expand(node.type(node.props))
+    return { ...node, props: { ...node.props, children: expand(node.props.children) } }
+  }
+  const found = []
+  const walk = (node) => {
+    if (Array.isArray(node)) { node.forEach(walk); return }
+    if (!node || typeof node !== 'object') return
+    if (typeof node.props?.className === 'string' && node.props.className.split(' ').includes('bt-jobs-badge')) found.push(node)
+    walk(node.props?.children)
+  }
+  walk(expand(row.type(row.props)))
+  return found
+}

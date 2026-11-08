@@ -54,6 +54,7 @@ import { USER_MESSAGE_CSS, UserMessageCell, canDrawUserMessages } from './user-m
 import { QueueDock, QUEUE_CSS } from './queue-dock.js'
 import { noticeApprovals } from './approval-notices.js'
 import { listedOpener } from './open-listed.js'
+import { JOBS_CSS, teamJobSessions } from './jobs.js'
 
 export const inject = ['sessions', 'uiWorkspace', 'uiConversation', 'slots', 'theme', 'layout']
 
@@ -73,7 +74,7 @@ export function apply(ctx) {
   let seenAt = seenStore.read()
   // `details` is the panel's subject (a Session id); `view` picks details or the
   // subject Bot's browser inside it.
-  const ui = createSource({ details: null, view: 'details', renaming: false, tab: null, side: null, newChat: null, exchange: null, menu: null, voice: null, palette: null, quote: null, settings: null, memory: null, toast: null, signIn: null, renameAgent: null, unread: unreadStore.read(), reactions: reactionStore.read(), visits: {}, panelYield: false, leftDrawer: false, bootFailed: false, goalCompose: null, goalOpen: null })
+  const ui = createSource({ details: null, view: 'details', renaming: false, tab: null, side: null, newChat: null, exchange: null, menu: null, voice: null, palette: null, quote: null, settings: null, memory: null, jobs: false, jobsDismissed: {}, toast: null, signIn: null, renameAgent: null, unread: unreadStore.read(), reactions: reactionStore.read(), visits: {}, panelYield: false, leftDrawer: false, bootFailed: false, goalCompose: null, goalOpen: null })
   // The left column's kept preference, and the frame geometry the layout rules
   // in frame-layout.js read: the window and the shell's collapsed track come from
   // installFrameWatch, the open column's width is the user's own.
@@ -135,6 +136,9 @@ export function apply(ctx) {
   let liveKey
   // Per Session, what its transcript has in flight (running tools, a streaming reply).
   const live = createSource({})
+  // Background jobs: the client `jobs` service's rosters and observations, mirrored
+  // into one source so a row can count its own Sessions without a listener each.
+  const jobs = createSource({ ready: false, rows: {}, observed: {} })
   // Computer use: leases, per-Bot control, pending app cards and holds.
   const computer = createSource({})
   let computerKey = '{}'
@@ -466,6 +470,8 @@ export function apply(ctx) {
       })
     }
   }
+  // The client `jobs` service, once it attaches; the actions below close over it.
+  let jobService
   const actions = {
     ...teamActions({ call, after, partFor, roster, ui, live, cards, heldCards, turnClock, panelFolded }),
     learningAnswer: (id, approve) => after(call('learning-answer', { id, approve })),
@@ -608,6 +614,12 @@ export function apply(ctx) {
       ui.set(state => ({ ...state, reactions }))
     },
     clearUnread: id => writeUnread(id, false),
+    // Background jobs: the panel, each job's output stream, and the human stop.
+    openJobs: () => ui.set(state => (state.jobs ? state : { ...state, jobs: true })),
+    closeJobs: () => ui.set(state => (state.jobs ? { ...state, jobs: false } : state)),
+    dismissJob: (id) => ui.set(state => (state.jobsDismissed?.[id] ? state : { ...state, jobsDismissed: { ...state.jobsDismissed, [id]: true } })),
+    observeJob: (sessionId, id) => jobService?.observe(sessionId, id) ?? (() => {}),
+    killJob: (sessionId, id) => jobService?.kill(sessionId, id) ?? Promise.resolve({ ok: false, error: { message: 'Background jobs are unavailable' } }),
   }
   // Without the Desktop bridge these stay undefined, and no browser control renders.
   if (browsers) {
@@ -818,7 +830,47 @@ export function apply(ctx) {
       else if (kind === 'letgo') void actions.computerAllowForeground(botId)
     })
   }
-  const face = () => ({ actions, hooks: { roster, ui, activity, work, memoryNews, registry, turnClock, live, computer, cards, heldCards, browserPages, browserTabs, browserHolds, surface, update, frame, sidebarPref } })
+  // Watch every team Session's job roster while the client service is mounted. All
+  // rows live in one source: a row counts its own Sessions, the panel reads the rest.
+  const attachJobs = (scope) => {
+    const service = scope.jobs
+    jobService = service
+    const mirror = () => {
+      const snap = service.state.getSnapshot()
+      jobs.set(prev => (prev.ready && prev.rows === snap.rows && prev.observed === snap.observed
+        ? prev
+        : { ready: true, rows: snap.rows, observed: snap.observed }))
+    }
+    mirror()
+    const offState = service.state.subscribe(mirror)
+    const watched = new Map()
+    let watchedKey = ''
+    const sync = () => {
+      const ids = teamJobSessions(roster.getSnapshot()).map(entry => entry.sessionId)
+      const key = [...new Set(ids)].sort().join('|')
+      if (key === watchedKey) return
+      watchedKey = key
+      const next = new Set(ids)
+      for (const [id, release] of watched) if (!next.has(id)) { release(); watched.delete(id) }
+      for (const id of next) {
+        if (watched.has(id)) continue
+        try { watched.set(id, service.watchRows(id)) } catch (error) { noteClientError('background jobs', error) }
+      }
+    }
+    const offRoster = roster.subscribe(sync)
+    sync()
+    scope.effect(() => () => {
+      offState()
+      offRoster()
+      for (const release of watched.values()) release()
+      watched.clear()
+      if (jobService === service) jobService = undefined
+      jobs.set({ ready: false, rows: {}, observed: {} })
+    }, 'ds-bot: background jobs')
+  }
+  if (typeof ctx.inject === 'function') ctx.inject(['jobs'], attachJobs)
+  else if (ctx.get?.('jobs') !== undefined) attachJobs({ jobs: ctx.get('jobs'), effect: (run, label) => ctx.effect(run, label) })
+  const face = () => ({ actions, hooks: { roster, ui, activity, work, jobs, memoryNews, registry, turnClock, live, computer, cards, heldCards, browserPages, browserTabs, browserHolds, surface, update, frame, sidebarPref } })
   // The queue dock's per-session verbs, supplied the way the shell's own dock
   // injects them (the session facade and the conversation service).
   const queueFace = (sessionId) => ({
@@ -1034,6 +1086,7 @@ export function apply(ctx) {
     () => installCompiledStyles(WIDGET_CSS, 'widgets'),
     () => installCompiledStyles(HANDOFF_CSS, 'handoff'),
     () => installCompiledStyles(SIDE_CSS, 'side'),
+    () => installCompiledStyles(JOBS_CSS, 'jobs'),
     // Strip and panel styles also serve the side-chat tabs, which need no bridge.
     () => installCompiledStyles(BROWSER_CSS, 'browser'),
     () => installFrameWatch(frame),

@@ -1346,6 +1346,8 @@ test('the team view says what a member is doing in the call\'s own words', async
   host.emit('gc', 'turn/start', { turn: 1 })
   host.emit('gc', 'tool/call', { callId: 'k2', name: 'read', arguments: JSON.stringify({ file_path: 'E:\\src\\tools\\dump.py' }) })
   const { value } = await host.call('state', {})
+  // The client needs each member's group Session to watch its background jobs.
+  assert.deepEqual(value.rooms.find(room => room.id === 'r1').sessions, { a: 'ga', b: 'gb', c: 'gc' })
   assert.deepEqual(value.work.rooms.r1.map(entry => [entry.botId, entry.tool, entry.note, entry.target]), [['b', 'pwsh', 'Download Ghidra 12.1.4 and check its hash', undefined], ['c', 'read', undefined, 'dump.py']])
   assert.equal(value.work.bots.b.note, 'Download Ghidra 12.1.4 and check its hash')
   // What the Bot said in the step that made the call comes with it.
