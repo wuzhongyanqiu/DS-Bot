@@ -14829,7 +14829,9 @@ function JobsSection({ title, entries: entries2, labels, useJobs, actions, armed
           (0, import_react33.createElement)(
             "span",
             { className: "bt-job-actions" },
-            live ? (0, import_react33.createElement)("button", {
+            // A stopping job is already on its way out: the status line says so, and
+            // a second stop would only race the settlement.
+            job.status === "stopping" ? null : live ? (0, import_react33.createElement)("button", {
               type: "button",
               className: "bt-job-stop",
               "data-armed": armed === job.id || void 0,

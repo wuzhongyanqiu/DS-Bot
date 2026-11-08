@@ -142,3 +142,35 @@ test('the sidebar button is hidden until the jobs service answers', () => {
   assert.equal(textOf(button), '1')
   assert.equal(button.props['aria-label'], 'Jobs 1')
 })
+
+test('a stopping job counts as live until it settles, and cannot be stopped again', () => {
+  const state = {
+    ready: true,
+    observed: {},
+    rows: { writer: [job('job-a', 'stopping')] },
+  }
+  const badge = expand(JobsBadge({ useJobs: pick => pick(state), sessionIds: ['writer'] }))
+  assert.equal(textOf(badge), 'Jobs 1')
+  const panel = expand(JobsPanel({
+    roster, useJobs: pick => pick(state), useUi: pick => pick({ jobsDismissed: {} }),
+    actions: { closeJobs() {}, dismissJob() {}, observeJob() {}, killJob() {} },
+  }))
+  assert.match(textOf(panel), /Stopping…/)
+  assert.equal(collect(panel, node => node.props?.className === 'bt-job-stop').length, 0)
+})
+
+test('the same job in three Session rosters counts once everywhere', () => {
+  const shared = job('shared', 'running')
+  const state = {
+    ready: true,
+    observed: {},
+    rows: { writer: [shared], 'group-writer': [shared], 'room-session': [shared] },
+  }
+  const badge = expand(JobsBadge({ useJobs: pick => pick(state), sessionIds: ['writer', 'group-writer', 'room-session'] }))
+  assert.equal(textOf(badge), 'Jobs 1')
+  const panel = expand(JobsPanel({
+    roster, useJobs: pick => pick(state), useUi: pick => pick({ jobsDismissed: {} }),
+    actions: { closeJobs() {}, dismissJob() {}, observeJob() {}, killJob() {} },
+  }))
+  assert.equal(collect(panel, node => node.props?.className === 'bt-job').length, 1)
+})

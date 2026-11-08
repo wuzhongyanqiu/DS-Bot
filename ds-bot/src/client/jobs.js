@@ -167,12 +167,15 @@ function JobsSection({ title, entries, labels, useJobs, actions, armed, error, o
           h('span', { className: 'bt-job-status' }, jobStatusText(job)),
           h('span', { className: 'bt-job-dur' }, h(JobTime, { from: job.startedAt, to: live ? undefined : job.finishedAt })),
           h('span', { className: 'bt-job-actions' },
-            live
-              ? h('button', {
-                type: 'button', className: 'bt-job-stop', 'data-armed': armed === job.id || undefined,
-                onClick: () => onKill(job, armed === job.id),
-              }, armed === job.id ? t('Confirm stop') : t('Stop'))
-              : h('button', { type: 'button', className: 'bt-job-dismiss', 'aria-label': t('Clear'), title: t('Clear'), onClick: () => actions.dismissJob?.(job.id) }, h(CloseIcon)))),
+            // A stopping job is already on its way out: the status line says so, and
+            // a second stop would only race the settlement.
+            job.status === 'stopping' ? null
+              : live
+                ? h('button', {
+                  type: 'button', className: 'bt-job-stop', 'data-armed': armed === job.id || undefined,
+                  onClick: () => onKill(job, armed === job.id),
+                }, armed === job.id ? t('Confirm stop') : t('Stop'))
+                : h('button', { type: 'button', className: 'bt-job-dismiss', 'aria-label': t('Clear'), title: t('Clear'), onClick: () => actions.dismissJob?.(job.id) }, h(CloseIcon)))),
         h('div', { className: 'bt-job-label', title: job.label }, job.label),
         h(JobOutput, { job, sessionId: job.sessionId, useJobs, actions }),
         error?.[job.id] ? h('p', { className: 'bt-job-error' }, error[job.id]) : null)
