@@ -55,7 +55,7 @@ export function createTeam() {
   const seenStore = sharedMap(STORAGE.seen)
   let seenAt = seenStore.read()
   const roster = createSource(EMPTY_ROSTER)
-  const ui = createSource({ details: null, view: 'details', renaming: false, tab: null, newChat: null, exchange: null, menu: null, voice: null, palette: null, quote: null, settings: null, memory: null, toast: null, signIn: null, renameAgent: null, unread: unreadStore.read(), reactions: reactionStore.read(), visits: {} })
+  const ui = createSource({ details: null, view: 'details', renaming: false, tab: null, newChat: null, exchange: null, menu: null, voice: null, palette: null, quote: null, settings: null, memory: null, jobs: false, jobsDismissed: {}, whale: false, toast: null, signIn: null, renameAgent: null, unread: unreadStore.read(), reactions: reactionStore.read(), visits: {} })
   const activity = createSource({})
   const work = createSource(NO_WORK)
   const memoryNews = createSource({})
@@ -145,6 +145,8 @@ export function createTeam() {
       ui.set(state => (state.newChat || state.exchange || state.menu || state.palette ? { ...state, newChat: null, exchange: null, menu: null, palette: null } : state))
       show(partFor(id))
     },
+    openWhale: () => ui.set(state => (state.whale ? state : { ...state, whale: true })),
+    closeWhale: () => ui.set(state => (state.whale ? { ...state, whale: false } : state)),
     landOn: id => show(partFor(id)),
     toggleSidebar: () => layout.set(state => ({ ...state, wide: !state.wide })),
     markUnread: id => writeUnread(id, true),

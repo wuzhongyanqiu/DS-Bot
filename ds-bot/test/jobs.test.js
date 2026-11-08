@@ -1,7 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createRequire } from 'node:module'
-import { dirname, join } from 'node:path'
+import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runInNewContext } from 'node:vm'
 import { build } from 'esbuild'
@@ -32,7 +31,6 @@ const job = (id, status, extra = {}) => ({
 const bot = { id: 'writer', name: 'Writer', sessionId: 'writer' }
 const room = { id: 'room', name: 'Ops', sessionId: 'room-session', members: ['writer'], sessions: { writer: 'group-writer' } }
 const roster = { bots: [bot], rooms: [room], byId: { writer: bot }, roomsById: { room } }
-const snapshot = rows => ({ getSnapshot: () => rows })
 const expand = (node) => {
   if (Array.isArray(node)) return node.map(expand)
   if (!node || typeof node !== 'object') return node

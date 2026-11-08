@@ -55,6 +55,7 @@ import { QueueDock, QUEUE_CSS } from './queue-dock.js'
 import { noticeApprovals } from './approval-notices.js'
 import { listedOpener } from './open-listed.js'
 import { JOBS_CSS, teamJobSessions } from './jobs.js'
+import { WHALE_CSS } from './whale.js'
 
 export const inject = ['sessions', 'uiWorkspace', 'uiConversation', 'slots', 'theme', 'layout']
 
@@ -74,7 +75,7 @@ export function apply(ctx) {
   let seenAt = seenStore.read()
   // `details` is the panel's subject (a Session id); `view` picks details or the
   // subject Bot's browser inside it.
-  const ui = createSource({ details: null, view: 'details', renaming: false, tab: null, side: null, newChat: null, exchange: null, menu: null, voice: null, palette: null, quote: null, settings: null, memory: null, jobs: false, jobsDismissed: {}, toast: null, signIn: null, renameAgent: null, unread: unreadStore.read(), reactions: reactionStore.read(), visits: {}, panelYield: false, leftDrawer: false, bootFailed: false, goalCompose: null, goalOpen: null })
+  const ui = createSource({ details: null, view: 'details', renaming: false, tab: null, side: null, newChat: null, exchange: null, menu: null, voice: null, palette: null, quote: null, settings: null, memory: null, jobs: false, jobsDismissed: {}, whale: false, toast: null, signIn: null, renameAgent: null, unread: unreadStore.read(), reactions: reactionStore.read(), visits: {}, panelYield: false, leftDrawer: false, bootFailed: false, goalCompose: null, goalOpen: null })
   // The left column's kept preference, and the frame geometry the layout rules
   // in frame-layout.js read: the window and the shell's collapsed track come from
   // installFrameWatch, the open column's width is the user's own.
@@ -616,6 +617,8 @@ export function apply(ctx) {
     clearUnread: id => writeUnread(id, false),
     // Background jobs: the panel, each job's output stream, and the human stop.
     openJobs: () => ui.set(state => (state.jobs ? state : { ...state, jobs: true })),
+    openWhale: () => ui.set(state => (state.whale ? state : { ...state, whale: true })),
+    closeWhale: () => ui.set(state => (state.whale ? { ...state, whale: false } : state)),
     closeJobs: () => ui.set(state => (state.jobs ? { ...state, jobs: false } : state)),
     dismissJob: (id) => ui.set(state => (state.jobsDismissed?.[id] ? state : { ...state, jobsDismissed: { ...state.jobsDismissed, [id]: true } })),
     observeJob: (sessionId, id) => jobService?.observe(sessionId, id) ?? (() => {}),
@@ -1087,6 +1090,7 @@ export function apply(ctx) {
     () => installCompiledStyles(HANDOFF_CSS, 'handoff'),
     () => installCompiledStyles(SIDE_CSS, 'side'),
     () => installCompiledStyles(JOBS_CSS, 'jobs'),
+    () => installCompiledStyles(WHALE_CSS, 'whale'),
     // Strip and panel styles also serve the side-chat tabs, which need no bridge.
     () => installCompiledStyles(BROWSER_CSS, 'browser'),
     () => installFrameWatch(frame),

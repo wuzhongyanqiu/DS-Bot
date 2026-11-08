@@ -141,7 +141,7 @@ export function install(rt) {
   }
   // What a host that only reads the team may still answer.
   // Updates change the dsh profile, not the team, so a reading host may run them too.
-  const READS = new Set(['state', 'models', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'room-progress', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'thinking', 'avatar-library', 'computer-system-status', 'computer-shot', 'local-agents', 'visible-session'])
+  const READS = new Set(['state', 'models', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'room-progress', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'thinking', 'avatar-library', 'computer-system-status', 'computer-shot', 'local-agents', 'visible-session', 'whale-status', 'whale-runs'])
 
   async function setPrefs(body) {
     if (body.theme !== undefined) {
@@ -679,6 +679,12 @@ export function install(rt) {
           if (bot === undefined) return fail('Unknown Bot', 'bot/not-found')
           return ok(await rt.switchPart(bot.id, String(body.sessionId ?? '')))
         }
+        // The Big Fish board: one read-only snapshot of the whale loop. No writes,
+        // no model calls; the client only asks when the panel opens.
+        case 'whale-status':
+          return ok(await rt.whaleStatus())
+        case 'whale-runs':
+          return ok(await rt.whaleRuns())
         case 'diagnostics':
           await rt.load()
           return ok(await rt.diagnostics.report(body))

@@ -33,6 +33,13 @@ export function ShareIcon() {
   return h('svg', { width: 16, height: 16, viewBox: '0 0 20 20', fill: 'none', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true },
     h('path', { d: 'M10 12.5V3M6.5 6.5L10 3l3.5 3.5M4 11v4.5A1.5 1.5 0 0 0 5.5 17h9a1.5 1.5 0 0 0 1.5-1.5V11' }))
 }
+export function FishIcon({ size = 16 }) {
+  return h('svg', { width: size, height: size, viewBox: '0 0 20 20', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true },
+    h('path', { d: 'M2.8 10c2.7-3.6 6.1-3.6 8.8 0-2.7 3.6-6.1 3.6-8.8 0z' }),
+    h('path', { d: 'M11.6 10l3.8-3v6l-3.8-3z' }),
+    h('path', { d: 'M6.2 9.4h.01' }))
+}
+
 export function CloseIcon() {
   return h('svg', { width: 16, height: 16, viewBox: '0 0 20 20', 'aria-hidden': true }, h('path', { d: 'M5 5l10 10M15 5L5 15', stroke: 'currentColor', strokeWidth: 1.6, strokeLinecap: 'round' }))
 }
