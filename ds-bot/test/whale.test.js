@@ -64,7 +64,7 @@ test('the snapshot path resolves from plugin config, environment, then DSH home'
   }
 })
 
-async function bridgeServer(t, token) {
+async function bridgeServer(t) {
   const { createServer } = await import('node:http')
   const seen = []
   let wakes = 0

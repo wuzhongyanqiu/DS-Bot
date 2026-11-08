@@ -689,6 +689,8 @@ export function install(rt) {
         // its console token. A 429 keeps the remaining seconds as data, not an error.
         case 'whale-pause':
           return ok(await rt.whalePause(body.mode))
+        case 'whale-resume':
+          return ok(await rt.whalePause('resume'))
         case 'whale-wake':
           return ok(await rt.whaleWake())
         case 'diagnostics':

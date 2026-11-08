@@ -620,6 +620,7 @@ export function apply(ctx) {
     openWhale: () => ui.set(state => (state.whale ? state : { ...state, whale: true })),
     closeWhale: () => ui.set(state => (state.whale ? { ...state, whale: false } : state)),
     whalePause: mode => call('whale-pause', { mode }),
+    whaleResume: () => call('whale-resume'),
     whaleWake: () => call('whale-wake'),
     closeJobs: () => ui.set(state => (state.jobs ? { ...state, jobs: false } : state)),
     dismissJob: (id) => ui.set(state => (state.jobsDismissed?.[id] ? state : { ...state, jobsDismissed: { ...state.jobsDismissed, [id]: true } })),

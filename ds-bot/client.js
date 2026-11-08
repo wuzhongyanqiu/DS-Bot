@@ -100,6 +100,9 @@ var ZH = {
   "Bot list": "Bot 列表",
   "Big Fish board": "大肥鱼看板",
   "Resume the wake loop": "恢复",
+  "No records today · Last wake {time}": "今天没有记录 · 最近一次是 {time}",
+  "No records in the last 7 days · Last wake {time}": "近 7 天没有记录 · 最近一次是 {time}",
+  "See the last 7 days": "看近 7 天",
   "Resumed": "已恢复",
   "Woke it once": "已叫醒一轮",
   "Wait {seconds} seconds": "还要等 {seconds} 秒",
@@ -15004,6 +15007,7 @@ var RANGES = [
   { key: "week", label: "Last 7 days" },
   { key: "all", label: "All" }
 ];
+var DEFAULT_RANGE = "week";
 var num2 = (value) => Number.isFinite(value) ? value.toLocaleString("en-US") : "—";
 var pad2 = (value) => String(value).padStart(2, "0");
 var dayStart = (now = Date.now()) => {
@@ -15021,6 +15025,18 @@ var runClock = (at) => {
   const date = new Date(at);
   return `${date.getMonth() + 1}-${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
 };
+function rangeEmptyNotice(runs, range, now = Date.now()) {
+  const latest = (runs ?? []).reduce((max, run2) => Math.max(max, Number(run2.at) || 0), 0);
+  if (latest === 0) return { text: t("No wake records"), action: null };
+  const time = runClock(latest);
+  if (range === "week") return { text: t("No records in the last 7 days · Last wake {time}", { time }), action: { range: "all", label: t("See all") } };
+  if (range === "all") return { text: t("No wake records"), action: null };
+  const weekly = (runs ?? []).some((run2) => run2.at >= weekStart(now));
+  return {
+    text: t("No records today · Last wake {time}", { time }),
+    action: weekly ? { range: "week", label: t("See the last 7 days") } : { range: "all", label: t("See all") }
+  };
+}
 var nextWakeText = (at) => Number.isFinite(at) ? runClock(at) : "—";
 var diarySummary = (text, limit = 80) => {
   const flat = String(text ?? "").replace(/\s+/g, " ").trim();
@@ -15124,7 +15140,7 @@ function actionNotice(value, kind) {
   return t("Paused");
 }
 function WhalePanel({ actions, leaving = false }) {
-  const [range, setRange] = (0, import_react34.useState)("today");
+  const [range, setRange] = (0, import_react34.useState)(DEFAULT_RANGE);
   const [data, setData] = (0, import_react34.useState)({ loading: true, available: false, reason: "", status: null, runs: [], updatedAt: null });
   const [error, setError] = (0, import_react34.useState)("");
   const [busy, setBusy] = (0, import_react34.useState)(null);
@@ -15174,7 +15190,7 @@ function WhalePanel({ actions, leaving = false }) {
     setBusy(kind);
     setNotice("");
     try {
-      const value = kind === "wake" ? await actions.whaleWake?.() : await actions.whalePause?.(kind);
+      const value = kind === "wake" ? await actions.whaleWake?.() : kind === "resume" ? await actions.whaleResume?.() : await actions.whalePause?.("pause");
       if (!alive.current) return;
       setNotice(actionNotice(value, kind));
       if (value?.ok !== false) void load();
@@ -15205,28 +15221,34 @@ function WhalePanel({ actions, leaving = false }) {
       (0, import_react34.createElement)(
         "div",
         { className: "bt-whale-body" },
-        !data.loading && !data.available ? (0, import_react34.createElement)(
+        data.status ? (0, import_react34.createElement)(WhaleStatusBar, { status: data.status }) : null,
+        data.available ? (0, import_react34.createElement)("div", { className: "bt-whale-filter", role: "group", "aria-label": t("Range") }, RANGES.map((entry) => (0, import_react34.createElement)("button", {
+          key: entry.key,
+          type: "button",
+          className: "bt-whale-range",
+          "aria-pressed": range === entry.key,
+          onClick: () => setRange(entry.key)
+        }, t(entry.label)))) : null,
+        // Actions stay reachable even when the snapshot is missing: pause/resume are
+        // bridge controls, not board data.
+        (0, import_react34.createElement)(WhaleActions, { disabled: false, busy, onAction: (kind) => {
+          void act(kind);
+        } }),
+        notice ? (0, import_react34.createElement)("p", { className: "bt-whale-notice", role: "status" }, notice) : null,
+        data.loading ? (0, import_react34.createElement)("p", { className: "bt-whale-empty" }, t("Loading…")) : !data.available ? (0, import_react34.createElement)(
           "div",
           { className: "bt-whale-empty" },
           (0, import_react34.createElement)("p", null, error || data.reason || t("Waiting for the QQ bridge data")),
           (0, import_react34.createElement)("p", { className: "bt-whale-hint" }, t("The board reads one snapshot from the host; no polling while it is closed."))
-        ) : (0, import_react34.createElement)(
-          "div",
-          null,
-          (0, import_react34.createElement)(WhaleStatusBar, { status: data.status }),
-          (0, import_react34.createElement)("div", { className: "bt-whale-filter", role: "group", "aria-label": t("Range") }, RANGES.map((entry) => (0, import_react34.createElement)("button", {
-            key: entry.key,
-            type: "button",
-            className: "bt-whale-range",
-            "aria-pressed": range === entry.key,
-            onClick: () => setRange(entry.key)
-          }, t(entry.label)))),
-          (0, import_react34.createElement)(WhaleActions, { disabled: false, busy, onAction: (kind) => {
-            void act(kind);
-          } }),
-          notice ? (0, import_react34.createElement)("p", { className: "bt-whale-notice", role: "status" }, notice) : null,
-          data.loading ? (0, import_react34.createElement)("p", { className: "bt-whale-empty" }, t("Loading…")) : visible.length === 0 ? (0, import_react34.createElement)("p", { className: "bt-whale-empty" }, t("No wake records")) : (0, import_react34.createElement)("ul", { className: "bt-whale-runs" }, visible.map((run2) => (0, import_react34.createElement)(WhaleRun, { key: run2.id, run: run2 })))
-        )
+        ) : visible.length === 0 ? (() => {
+          const empty = rangeEmptyNotice(data.runs, range);
+          return (0, import_react34.createElement)(
+            "div",
+            { className: "bt-whale-empty" },
+            (0, import_react34.createElement)("p", null, empty.text),
+            empty.action ? (0, import_react34.createElement)("button", { type: "button", className: "bt-whale-more", onClick: () => setRange(empty.action.range) }, empty.action.label) : null
+          );
+        })() : (0, import_react34.createElement)("ul", { className: "bt-whale-runs" }, visible.map((run2) => (0, import_react34.createElement)(WhaleRun, { key: run2.id, run: run2 })))
       )
     )
   );
@@ -15258,6 +15280,8 @@ var WHALE_CSS = `
 .bt-whale-op:disabled{opacity:.55}
 .bt-whale-op[data-busy]{color:var(--bt-ink-2);border-color:var(--bt-line)}
 .bt-whale-notice{margin:0 0 10px;padding:6px 8px;border-radius:6px;background:var(--bt-tag-bg);color:var(--bt-ink-2);font-size:11px;line-height:16px}
+.bt-whale-more{margin-top:10px;border:.5px solid var(--bt-line-2);border-radius:6px;background:var(--bt-main);color:var(--bt-ink-2);font:inherit;font-size:12px;line-height:22px;padding:0 10px;cursor:pointer}
+.bt-whale-more:hover{background:var(--bt-hover);color:var(--bt-ink)}
 .bt-whale-runs{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
 .bt-whale-run{padding:9px 10px;border:.5px solid var(--bt-line);border-radius:10px;background:color-mix(in srgb,var(--bt-card) 60%,transparent)}
 .bt-whale-run-head{display:flex;align-items:center;gap:8px;min-width:0;color:var(--bt-ink-3);font-size:11px;line-height:16px;font-variant-numeric:tabular-nums}
@@ -28250,6 +28274,7 @@ function apply(ctx) {
     openWhale: () => ui2.set((state) => state.whale ? state : { ...state, whale: true }),
     closeWhale: () => ui2.set((state) => state.whale ? { ...state, whale: false } : state),
     whalePause: (mode) => call("whale-pause", { mode }),
+    whaleResume: () => call("whale-resume"),
     whaleWake: () => call("whale-wake"),
     closeJobs: () => ui2.set((state) => state.jobs ? { ...state, jobs: false } : state),
     dismissJob: (id) => ui2.set((state) => state.jobsDismissed?.[id] ? state : { ...state, jobsDismissed: { ...state.jobsDismissed, [id]: true } }),

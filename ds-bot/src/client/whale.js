@@ -14,6 +14,9 @@ const RANGES = [
   { key: 'week', label: 'Last 7 days' },
   { key: 'all', label: 'All' },
 ]
+// Opening after midnight must not land on an empty "today"; the week always holds
+// the previous night's wakes.
+export const DEFAULT_RANGE = 'week'
 
 const num = value => (Number.isFinite(value) ? value.toLocaleString('en-US') : '—')
 
@@ -34,6 +37,20 @@ export function filterRuns(runs, range, now = Date.now()) {
 export const runClock = at => {
   const date = new Date(at)
   return `${date.getMonth() + 1}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+// What an empty range says: never just "nothing", and always a way to the range
+// that does hold the latest run.
+export function rangeEmptyNotice(runs, range, now = Date.now()) {
+  const latest = (runs ?? []).reduce((max, run) => Math.max(max, Number(run.at) || 0), 0)
+  if (latest === 0) return { text: t('No wake records'), action: null }
+  const time = runClock(latest)
+  if (range === 'week') return { text: t('No records in the last 7 days · Last wake {time}', { time }), action: { range: 'all', label: t('See all') } }
+  if (range === 'all') return { text: t('No wake records'), action: null }
+  const weekly = (runs ?? []).some(run => run.at >= weekStart(now))
+  return {
+    text: t('No records today · Last wake {time}', { time }),
+    action: weekly ? { range: 'week', label: t('See the last 7 days') } : { range: 'all', label: t('See all') },
+  }
 }
 export const nextWakeText = at => (Number.isFinite(at) ? runClock(at) : '—')
 export const diarySummary = (text, limit = 80) => {
@@ -132,7 +149,7 @@ export function actionNotice(value, kind) {
 }
 
 export function WhalePanel({ actions, leaving = false }) {
-  const [range, setRange] = useState('today')
+  const [range, setRange] = useState(DEFAULT_RANGE)
   const [data, setData] = useState({ loading: true, available: false, reason: '', status: null, runs: [], updatedAt: null })
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(null)
@@ -179,7 +196,9 @@ export function WhalePanel({ actions, leaving = false }) {
     setBusy(kind)
     setNotice('')
     try {
-      const value = kind === 'wake' ? await actions.whaleWake?.() : await actions.whalePause?.(kind)
+      const value = kind === 'wake' ? await actions.whaleWake?.()
+        : kind === 'resume' ? await actions.whaleResume?.()
+          : await actions.whalePause?.('pause')
       if (!alive.current) return
       setNotice(actionNotice(value, kind))
       if (value?.ok !== false) void load()
@@ -199,24 +218,32 @@ export function WhalePanel({ actions, leaving = false }) {
         h('button', { type: 'button', className: 'bt-whale-refresh', disabled: data.loading, onClick: () => { void load() } }, t('Refresh')),
         h('button', { type: 'button', className: 'bt-icon-btn', 'aria-label': t('Close Big Fish board'), onClick: close }, h(CloseIcon))),
       h('div', { className: 'bt-whale-body' },
-        !data.loading && !data.available
-          ? h('div', { className: 'bt-whale-empty' },
-            h('p', null, error || data.reason || t('Waiting for the QQ bridge data')),
-            h('p', { className: 'bt-whale-hint' }, t('The board reads one snapshot from the host; no polling while it is closed.')))
-          : h('div', null,
-            h(WhaleStatusBar, { status: data.status }),
-            h('div', { className: 'bt-whale-filter', role: 'group', 'aria-label': t('Range') }, RANGES.map(entry =>
-              h('button', {
-                key: entry.key, type: 'button', className: 'bt-whale-range', 'aria-pressed': range === entry.key,
-                onClick: () => setRange(entry.key),
-              }, t(entry.label)))),
-            h(WhaleActions, { disabled: false, busy, onAction: kind => { void act(kind) } }),
-            notice ? h('p', { className: 'bt-whale-notice', role: 'status' }, notice) : null,
-            data.loading
-              ? h('p', { className: 'bt-whale-empty' }, t('Loading…'))
-              : visible.length === 0
-                ? h('p', { className: 'bt-whale-empty' }, t('No wake records'))
-                : h('ul', { className: 'bt-whale-runs' }, visible.map(run => h(WhaleRun, { key: run.id, run })))))))
+        data.status ? h(WhaleStatusBar, { status: data.status }) : null,
+        data.available
+          ? h('div', { className: 'bt-whale-filter', role: 'group', 'aria-label': t('Range') }, RANGES.map(entry =>
+            h('button', {
+              key: entry.key, type: 'button', className: 'bt-whale-range', 'aria-pressed': range === entry.key,
+              onClick: () => setRange(entry.key),
+            }, t(entry.label))))
+          : null,
+        // Actions stay reachable even when the snapshot is missing: pause/resume are
+        // bridge controls, not board data.
+        h(WhaleActions, { disabled: false, busy, onAction: kind => { void act(kind) } }),
+        notice ? h('p', { className: 'bt-whale-notice', role: 'status' }, notice) : null,
+        data.loading
+          ? h('p', { className: 'bt-whale-empty' }, t('Loading…'))
+          : !data.available
+            ? h('div', { className: 'bt-whale-empty' },
+              h('p', null, error || data.reason || t('Waiting for the QQ bridge data')),
+              h('p', { className: 'bt-whale-hint' }, t('The board reads one snapshot from the host; no polling while it is closed.')))
+            : visible.length === 0
+              ? (() => {
+                const empty = rangeEmptyNotice(data.runs, range)
+                return h('div', { className: 'bt-whale-empty' },
+                  h('p', null, empty.text),
+                  empty.action ? h('button', { type: 'button', className: 'bt-whale-more', onClick: () => setRange(empty.action.range) }, empty.action.label) : null)
+              })()
+              : h('ul', { className: 'bt-whale-runs' }, visible.map(run => h(WhaleRun, { key: run.id, run }))))))
 }
 
 export const WHALE_CSS = `
@@ -246,6 +273,8 @@ export const WHALE_CSS = `
 .bt-whale-op:disabled{opacity:.55}
 .bt-whale-op[data-busy]{color:var(--bt-ink-2);border-color:var(--bt-line)}
 .bt-whale-notice{margin:0 0 10px;padding:6px 8px;border-radius:6px;background:var(--bt-tag-bg);color:var(--bt-ink-2);font-size:11px;line-height:16px}
+.bt-whale-more{margin-top:10px;border:.5px solid var(--bt-line-2);border-radius:6px;background:var(--bt-main);color:var(--bt-ink-2);font:inherit;font-size:12px;line-height:22px;padding:0 10px;cursor:pointer}
+.bt-whale-more:hover{background:var(--bt-hover);color:var(--bt-ink)}
 .bt-whale-runs{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
 .bt-whale-run{padding:9px 10px;border:.5px solid var(--bt-line);border-radius:10px;background:color-mix(in srgb,var(--bt-card) 60%,transparent)}
 .bt-whale-run-head{display:flex;align-items:center;gap:8px;min-width:0;color:var(--bt-ink-3);font-size:11px;line-height:16px;font-variant-numeric:tabular-nums}

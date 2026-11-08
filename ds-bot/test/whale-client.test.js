@@ -8,7 +8,7 @@ import { build } from 'esbuild'
 const PLUGIN = dirname(dirname(fileURLToPath(import.meta.url)))
 const { outputFiles } = await build({
   stdin: {
-    contents: "export { WhaleButton, WhaleRun, WhaleStatusBar, WhaleActions, actionNotice, diarySummary, filterRuns, whaleStatusChips, resultLabel } from './src/client/whale.js'",
+    contents: "export { DEFAULT_RANGE, WhaleButton, WhaleRun, WhaleStatusBar, WhaleActions, actionNotice, diarySummary, filterRuns, rangeEmptyNotice, whaleStatusChips, resultLabel } from './src/client/whale.js'",
     resolveDir: PLUGIN,
   },
   bundle: true, format: 'cjs', platform: 'browser', write: false, logLevel: 'silent',
@@ -22,7 +22,7 @@ const react = {
 const sandbox = { module: { exports: {} }, require: name => (name === 'react' ? react : {}), window: { addEventListener() {}, removeEventListener() {} } }
 sandbox.exports = sandbox.module.exports
 runInNewContext(outputFiles[0].text, sandbox)
-const { WhaleButton, WhaleRun, WhaleStatusBar, WhaleActions, actionNotice, diarySummary, filterRuns, whaleStatusChips, resultLabel } = sandbox.module.exports
+const { DEFAULT_RANGE, WhaleButton, WhaleRun, WhaleStatusBar, WhaleActions, actionNotice, diarySummary, filterRuns, rangeEmptyNotice, whaleStatusChips, resultLabel } = sandbox.module.exports
 
 const expand = (node) => {
   if (Array.isArray(node)) return node.map(expand)
@@ -116,4 +116,20 @@ test('a 429 answer becomes the remaining seconds, not a generic failure', () => 
   assert.equal(actionNotice({ ok: true }, 'resume'), 'Resumed')
   assert.equal(actionNotice({ ok: true }, 'wake'), 'Woke it once')
   assert.equal(actionNotice({ ok: false, error: '桥拒绝' }, 'pause'), '桥拒绝')
+})
+
+test('the board opens on the week, never on an empty today', () => {
+  assert.equal(DEFAULT_RANGE, 'week')
+  const now = new Date(2026, 10, 9, 1, 30).getTime()
+  const lastNight = new Date(2026, 10, 8, 23, 53).getTime()
+  const runs = [{ id: 'last', at: lastNight }]
+  const empty = rangeEmptyNotice(runs, 'today', now)
+  assert.match(empty.text, /No records today/)
+  assert.match(empty.text, /11-08 23:53/)
+  assert.equal(empty.action.range, 'week')
+  assert.equal(empty.action.label, 'See the last 7 days')
+  assert.equal(filterRuns(runs, DEFAULT_RANGE, now).length, 1)
+  const older = [{ id: 'old', at: new Date(2026, 9, 1, 12, 0).getTime() }]
+  assert.equal(rangeEmptyNotice(older, 'today', now).action.range, 'all')
+  assert.match(rangeEmptyNotice(older, 'week', now).text, /No records in the last 7 days/)
 })
