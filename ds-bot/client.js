@@ -3240,6 +3240,11 @@ html[data-bt-collapsing] [class*="_frame"]:has(>[class*="_sidebarCol"]){transiti
    edge need room beside the 56px rows, or the list scrolls sideways. */
 .bt-leftcol[data-left=rail]{padding:calc(var(--bt-lc-clear) + 8px) 0 8px}
 .bt-leftcol-foot-rail{flex-direction:column;gap:8px}
+.bt-shell-actions{display:flex;align-items:center;gap:9px;min-width:0}
+.bt-leftcol-foot-rail .bt-shell-actions{flex-direction:column;gap:8px}
+/* A footer action built for the shell's 42px row keeps only its icon here. */
+.bt-shell-actions .dsh-mobile-control__trigger:not(.is-rail){flex:none;width:36px;min-width:36px;height:36px;margin:0;padding:0;justify-content:center;border-radius:50%}
+.bt-shell-actions .dsh-mobile-control__trigger:not(.is-rail) .dsh-mobile-control__trigger-label{display:none}
 /* A drag that crosses the rail's snap line rides the spring to its target: the
    content is pinned at the target size so only the column's edge moves. */
 .bt-leftcol[data-folding]{overflow:hidden;transition:width ${SPRING_SHAPE.duration}ms ${SPRING_SHAPE.easing}}
@@ -15314,6 +15319,23 @@ function useMarkedUnread(id, active, marked, actions) {
   }, [active, marked]);
 }
 var PinMark = () => (0, import_react35.createElement)("span", { className: "bt-pin", "aria-hidden": true }, (0, import_react35.createElement)(PinMarkIcon));
+var thirdPartyFooterActions = (entries2) => (entries2 ?? []).filter((entry) => {
+  const id = entry?.options?.id;
+  if (id === "bot-account" || id === "bot-return") return false;
+  if (entry?.registrant === "ds-bot") return false;
+  if (entry?.inject !== void 0 || entry?.store !== void 0 || entry?.select !== void 0) return false;
+  return typeof entry?.component === "function";
+});
+function ShellFooterActions({ useFooterActions, wide }) {
+  const entries2 = useFooterActions ? useFooterActions((list) => list) : [];
+  const actions = thirdPartyFooterActions(entries2);
+  if (actions.length === 0) return null;
+  return (0, import_react35.createElement)(
+    "span",
+    { className: "bt-shell-actions", "data-wide": wide ? "" : void 0 },
+    actions.map((entry, index) => (0, import_react35.createElement)(entry.component, { key: entry.options?.key ?? entry.options?.id ?? index, wide }))
+  );
+}
 var nameIfCut = (event) => {
   const row = event.currentTarget;
   const name = row.querySelector(".bt-row-title");
@@ -15917,10 +15939,17 @@ function TeamSidebar(props) {
     main ? (0, import_react35.createElement)(BotRow, { ...rowProps, bot: main, marked: markedUnread[main.id] === true }) : roster.ready ? null : (0, import_react35.createElement)("div", { className: "bt-hint" }, bootFailed ? bootHint() : t("Setting up your Main Bot…")),
     (0, import_react35.createElement)("span", { className: "bt-rail-sep", "aria-hidden": true })
   );
-  const foot = wideContent ? (0, import_react35.createElement)("div", { className: "bt-leftcol-foot" }, (0, import_react35.createElement)(WhaleButton, { actions }), (0, import_react35.createElement)(AccountLauncher, { seat: false, actions })) : (0, import_react35.createElement)(
+  const foot = wideContent ? (0, import_react35.createElement)(
+    "div",
+    { className: "bt-leftcol-foot" },
+    (0, import_react35.createElement)(ShellFooterActions, { useFooterActions: props.useFooterActions, wide: true }),
+    (0, import_react35.createElement)(WhaleButton, { actions }),
+    (0, import_react35.createElement)(AccountLauncher, { seat: false, actions })
+  ) : (0, import_react35.createElement)(
     "div",
     { className: "bt-leftcol-foot bt-leftcol-foot-rail" },
     (0, import_react35.createElement)("button", { type: "button", className: "bt-round", "aria-label": t("New…"), title: t("New…"), onClick: () => actions.openNewChat("new") }, (0, import_react35.createElement)(PlusIcon)),
+    (0, import_react35.createElement)(ShellFooterActions, { useFooterActions: props.useFooterActions, wide: false }),
     (0, import_react35.createElement)(WhaleButton, { actions }),
     (0, import_react35.createElement)(AccountLauncher, { seat: false, actions })
   );
@@ -27782,6 +27811,7 @@ function apply(ctx) {
   let liveKey;
   const live = createSource({});
   const jobs = createSource({ ready: false, rows: {}, observed: {} });
+  const footerActions = createSource([]);
   const computer = createSource({});
   let computerKey = "{}";
   const cards = createSource({});
@@ -28524,9 +28554,21 @@ function apply(ctx) {
       jobs.set({ ready: false, rows: {}, observed: {} });
     }, "ds-bot: background jobs");
   };
+  ctx.effect(() => {
+    const sync = () => {
+      const entries2 = typeof ctx.slots?.entriesOfSlot === "function" ? ctx.slots.entriesOfSlot("sidebar.footer.action") : [];
+      footerActions.set((prev) => prev.length === entries2.length && prev.every((entry, index) => entry === entries2[index]) ? prev : [...entries2]);
+    };
+    sync();
+    const off = ctx.slots?.subscribe?.("sidebar.footer.action", sync);
+    return () => {
+      off?.();
+      footerActions.set([]);
+    };
+  }, "ds-bot: shell footer actions");
   if (typeof ctx.inject === "function") ctx.inject(["jobs"], attachJobs);
   else if (ctx.get?.("jobs") !== void 0) attachJobs({ jobs: ctx.get("jobs"), effect: (run2, label) => ctx.effect(run2, label) });
-  const face = () => ({ actions, hooks: { roster, ui: ui2, activity, work, jobs, memoryNews, registry, turnClock, live, computer, cards, heldCards, browserPages, browserTabs, browserHolds, surface, update, frame, sidebarPref } });
+  const face = () => ({ actions, hooks: { roster, ui: ui2, activity, work, jobs, footerActions, memoryNews, registry, turnClock, live, computer, cards, heldCards, browserPages, browserTabs, browserHolds, surface, update, frame, sidebarPref } });
   const queueFace = (sessionId) => ({
     ...face(),
     updateQueue: async (itemId, action) => await ctx.sessions.binding(sessionId)?.session?.updateQueue(itemId, action) ?? { ok: false },

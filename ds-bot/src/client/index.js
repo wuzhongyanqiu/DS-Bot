@@ -140,6 +140,9 @@ export function apply(ctx) {
   // Background jobs: the client `jobs` service's rosters and observations, mirrored
   // into one source so a row can count its own Sessions without a listener each.
   const jobs = createSource({ ready: false, rows: {}, observed: {} })
+  // Third-party actions registered into the shell's footer slot. DS Bot hides the
+  // shell's own foot, so it renders these winners itself in its footer row.
+  const footerActions = createSource([])
   // Computer use: leases, per-Bot control, pending app cards and holds.
   const computer = createSource({})
   let computerKey = '{}'
@@ -874,9 +877,20 @@ export function apply(ctx) {
       jobs.set({ ready: false, rows: {}, observed: {} })
     }, 'ds-bot: background jobs')
   }
+  // The shell footer slot is the one public list that third-party plugins use for
+  // their own footer buttons. Keep its live winners; TeamSidebar renders them.
+  ctx.effect(() => {
+    const sync = () => {
+      const entries = typeof ctx.slots?.entriesOfSlot === 'function' ? ctx.slots.entriesOfSlot('sidebar.footer.action') : []
+      footerActions.set(prev => (prev.length === entries.length && prev.every((entry, index) => entry === entries[index]) ? prev : [...entries]))
+    }
+    sync()
+    const off = ctx.slots?.subscribe?.('sidebar.footer.action', sync)
+    return () => { off?.(); footerActions.set([]) }
+  }, 'ds-bot: shell footer actions')
   if (typeof ctx.inject === 'function') ctx.inject(['jobs'], attachJobs)
   else if (ctx.get?.('jobs') !== undefined) attachJobs({ jobs: ctx.get('jobs'), effect: (run, label) => ctx.effect(run, label) })
-  const face = () => ({ actions, hooks: { roster, ui, activity, work, jobs, memoryNews, registry, turnClock, live, computer, cards, heldCards, browserPages, browserTabs, browserHolds, surface, update, frame, sidebarPref } })
+  const face = () => ({ actions, hooks: { roster, ui, activity, work, jobs, footerActions, memoryNews, registry, turnClock, live, computer, cards, heldCards, browserPages, browserTabs, browserHolds, surface, update, frame, sidebarPref } })
   // The queue dock's per-session verbs, supplied the way the shell's own dock
   // injects them (the session facade and the conversation service).
   const queueFace = (sessionId) => ({

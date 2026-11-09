@@ -192,6 +192,11 @@ html[data-bt-collapsing] [class*="_frame"]:has(>[class*="_sidebarCol"]){transiti
    edge need room beside the 56px rows, or the list scrolls sideways. */
 .bt-leftcol[data-left=rail]{padding:calc(var(--bt-lc-clear) + 8px) 0 8px}
 .bt-leftcol-foot-rail{flex-direction:column;gap:8px}
+.bt-shell-actions{display:flex;align-items:center;gap:9px;min-width:0}
+.bt-leftcol-foot-rail .bt-shell-actions{flex-direction:column;gap:8px}
+/* A footer action built for the shell's 42px row keeps only its icon here. */
+.bt-shell-actions .dsh-mobile-control__trigger:not(.is-rail){flex:none;width:36px;min-width:36px;height:36px;margin:0;padding:0;justify-content:center;border-radius:50%}
+.bt-shell-actions .dsh-mobile-control__trigger:not(.is-rail) .dsh-mobile-control__trigger-label{display:none}
 /* A drag that crosses the rail's snap line rides the spring to its target: the
    content is pinned at the target size so only the column's edge moves. */
 .bt-leftcol[data-folding]{overflow:hidden;transition:width ${SPRING_SHAPE.duration}ms ${SPRING_SHAPE.easing}}

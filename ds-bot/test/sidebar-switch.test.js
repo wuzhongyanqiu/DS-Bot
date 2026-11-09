@@ -16,7 +16,7 @@ const { JSDOM } = createRequire(join(process.env.DSH_HARNESS ?? join(PLUGIN, '..
 // fixtures retain refs across commits and run their layout effects after each render.
 const { outputFiles } = await build({
   stdin: {
-    contents: "export { SHELL_CSS } from './src/client/styles.js'\nexport { SIDEBAR_CSS, TeamSidebar } from './src/client/sidebar.js'\nexport { toolPhrase } from './src/client/cells.js'",
+    contents: "export { SHELL_CSS } from './src/client/styles.js'\nexport { SIDEBAR_CSS, TeamSidebar, ShellFooterActions, thirdPartyFooterActions } from './src/client/sidebar.js'\nexport { toolPhrase } from './src/client/cells.js'",
     resolveDir: PLUGIN,
   },
   bundle: true, format: 'cjs', platform: 'browser', write: false, logLevel: 'silent',
@@ -42,7 +42,7 @@ const sandbox = {
   window: viewport,
 }
 runInNewContext(outputFiles[0].text, sandbox)
-const { SHELL_CSS, SIDEBAR_CSS, TeamSidebar, toolPhrase } = module.exports
+const { SHELL_CSS, SIDEBAR_CSS, TeamSidebar, ShellFooterActions, thirdPartyFooterActions, toolPhrase } = module.exports
 
 function navigationSidebar(wide, { leftDrawer = false } = {}) {
   const calls = []
@@ -880,3 +880,21 @@ function collectBadges(row) {
   walk(expand(row.type(row.props)))
   return found
 }
+
+test('third-party footer actions are rendered in DS Bot\'s own foot', () => {
+  const Mobile = ({ wide }) => ({ type: 'button', props: { className: 'mobile-access', 'data-wide': wide ? 'yes' : 'no', children: ['移动访问'] } })
+  const entries = [
+    { component: Mobile, options: { id: 'dsh-mobile' }, registrant: 'dsh-mobile' },
+    { component: () => null, options: { id: 'bot-account' }, registrant: 'ds-bot' },
+    { component: () => null, options: { id: 'bot-return' }, registrant: 'ds-bot' },
+    { component: () => null, options: { id: 'injected' }, inject: () => ({}) },
+    { component: () => null, options: { id: 'store' }, store: {} },
+  ]
+  assert.deepEqual(thirdPartyFooterActions(entries).map(entry => entry.options.id), ['dsh-mobile'])
+  const tree = ShellFooterActions({ useFooterActions: pick => pick(entries), wide: true })
+  assert.equal(tree.props.className, 'bt-shell-actions')
+  const [button] = tree.props.children.flat()
+  assert.equal(button.type, Mobile)
+  assert.equal(button.props.wide, true)
+  assert.match(textOf(Mobile(button.props)), /移动访问/)
+})

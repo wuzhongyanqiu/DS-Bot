@@ -32,6 +32,25 @@ function useMarkedUnread(id, active, marked, actions) {
 
 const PinMark = () => h('span', { className: 'bt-pin', 'aria-hidden': true }, h(PinMarkIcon))
 
+// The shell's footer slot is where third-party plugins put their own foot buttons.
+// DS Bot hides that foot, so it renders the live winners itself; entries that need
+// slot-injected props cannot be rendered this way and stay with the shell.
+export const thirdPartyFooterActions = entries => (entries ?? []).filter((entry) => {
+  const id = entry?.options?.id
+  if (id === 'bot-account' || id === 'bot-return') return false
+  if (entry?.registrant === 'ds-bot') return false
+  if (entry?.inject !== undefined || entry?.store !== undefined || entry?.select !== undefined) return false
+  return typeof entry?.component === 'function'
+})
+
+export function ShellFooterActions({ useFooterActions, wide }) {
+  const entries = useFooterActions ? useFooterActions(list => list) : []
+  const actions = thirdPartyFooterActions(entries)
+  if (actions.length === 0) return null
+  return h('span', { className: 'bt-shell-actions', 'data-wide': wide ? '' : undefined },
+    actions.map((entry, index) => h(entry.component, { key: entry.options?.key ?? entry.options?.id ?? index, wide })))
+}
+
 // The rail shows a row's name only on hover; the wide list does so when the name is
 // cut, which only the laid-out row can tell, so it is measured as the pointer enters.
 const nameIfCut = (event) => {
@@ -620,9 +639,12 @@ export function TeamSidebar(props) {
   // The foot stands in for the shell's hidden footer: the account avatar, and on
   // the rail the new-chat button above it.
   const foot = wideContent
-    ? h('div', { className: 'bt-leftcol-foot' }, h(WhaleButton, { actions }), h(AccountLauncher, { seat: false, actions }))
+    ? h('div', { className: 'bt-leftcol-foot' },
+        h(ShellFooterActions, { useFooterActions: props.useFooterActions, wide: true }),
+        h(WhaleButton, { actions }), h(AccountLauncher, { seat: false, actions }))
     : h('div', { className: 'bt-leftcol-foot bt-leftcol-foot-rail' },
         h('button', { type: 'button', className: 'bt-round', 'aria-label': t('New…'), title: t('New…'), onClick: () => actions.openNewChat('new') }, h(PlusIcon)),
+        h(ShellFooterActions, { useFooterActions: props.useFooterActions, wide: false }),
         h(WhaleButton, { actions }),
         h(AccountLauncher, { seat: false, actions }))
   const content = h('div', { className: wideContent ? 'bt-side' : 'bt-side bt-rail', onKeyDown: typeToSearch },
