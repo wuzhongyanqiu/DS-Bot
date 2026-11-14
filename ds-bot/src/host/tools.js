@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { readAvatar } from './avatar.js'
-import { COLORS, EXTRA_COLORS, MESSAGE_INLINE_MAX, ROOM_MODES, SOURCE_KIND } from './constants.js'
+import { COLORS, EXTRA_COLORS, ISOLATION_REFUSAL, ISOLATION_TOOLS, MESSAGE_INLINE_MAX, ROOM_MODES, SOURCE_KIND } from './constants.js'
 import { within } from './folders.js'
 import { absoluteLinks } from './links.js'
 import { NAME_MAX } from './requests.js'
@@ -860,12 +860,17 @@ export function install(rt) {
     if (held.filtered === true || typeof agent.ctx?.on !== 'function') return
     const dispose = agent.ctx.on('system-prompt/assemble', async (_assembly, _context, next) => {
       const assembled = await next()
+      // An isolation space Bot keeps only its chat tools and their guidance, even in an
+      // assembly that still carries the tool list; the guard and the mask do the rest.
+      const isolated = rt.botOf(rt.selfOf(agent?.session?.id ?? agent?.id))?.isolation === true
+      const keep = name => !HIDDEN_TOOLS.includes(name) && (!isolated || ISOLATION_TOOLS.includes(name))
       // DSH 0.2.2 adds the tool list after this waterfall (#814), so only an
       // older assembly still carries tools to drop here.
       return {
         ...assembled,
-        ...Array.isArray(assembled.tools) ? { tools: assembled.tools.filter(tool => !HIDDEN_TOOLS.includes(tool.name)) } : {},
-        sections: assembled.sections.filter(section => !HIDDEN_SECTIONS.has(section.name)),
+        ...Array.isArray(assembled.tools) ? { tools: assembled.tools.filter(tool => keep(tool.name)) } : {},
+        sections: assembled.sections.filter(section => !HIDDEN_SECTIONS.has(section.name)
+          && (!isolated || !(typeof section.name === 'string' && section.name.startsWith('tool:') && !ISOLATION_TOOLS.includes(section.name.slice(5))))),
       }
     })
     held.filtered = true
@@ -917,10 +922,31 @@ export function install(rt) {
       } catch { /* a scoped name cannot be restricted; connectors are global */ }
     }
   }
+  // An isolation space Bot is not even offered the machine tools: whatever the profile
+  // serves is masked down to the chat tools. A name in the Agent's own scope cannot be
+  // restricted, so the guard below refuses every call outside the allowlist as well.
+  const maskIsolationTools = (agent, held) => {
+    const bot = rt.botOf(rt.selfOf(agent?.session?.id ?? agent?.id))
+    if (bot?.isolation !== true) return
+    if (typeof agent.ctx?.tools?.restrict !== 'function' || typeof ctx.tools?.schemas !== 'function') return
+    const deny = ctx.tools.schemas(agent).map(schema => schema.name).filter(name => !ISOLATION_TOOLS.includes(name))
+    const before = held.isolationDenied ?? new Set()
+    if (deny.length === before.size && deny.every(name => before.has(name))) return
+    for (const lift of held.isolationLifts ?? []) { try { lift() } catch { /* already lifted */ } }
+    held.isolationLifts = []
+    held.isolationDenied = new Set(deny)
+    for (const name of deny) {
+      try {
+        const lift = agent.ctx.tools.restrict({ deny: [name] })
+        if (typeof lift === 'function') held.isolationLifts.push(lift)
+      } catch { /* a scoped name cannot be restricted; the guard still refuses it */ }
+    }
+  }
   const reapplyToolMasks = () => {
     for (const held of scoped.values()) {
       if (held.agent === undefined) continue
       try { maskConnectorTools(held.agent, held) } catch (error) { rt.warn('ds-bot: connector mask failed: %s', error) }
+      try { maskIsolationTools(held.agent, held) } catch (error) { rt.warn('ds-bot: isolation mask failed: %s', error) }
     }
   }
 
@@ -977,6 +1003,7 @@ export function install(rt) {
       maskHiddenTools(agent, held, new Set(ctx.tools.schemas(agent).map(schema => schema.name)))
     }
     maskConnectorTools(agent, held)
+    maskIsolationTools(agent, held)
   }
   ctx.on('tools/change', () => reapplyToolMasks())
   // A new Bot, part, or group Session gets its Agent before ds-bot records it, so the
@@ -985,6 +1012,11 @@ export function install(rt) {
   // goal made there is blocked.
   ctx.tools.guard((exec) => {
     if (!rt.isBotSession(exec.agent?.id)) return undefined
+    // An isolation space wins over everything: a tool the mask could not reach — a
+    // scoped name, a stale list, a plugin added later — is still refused here, whatever
+    // the Bot's instructions say it may do.
+    const bot = rt.botOf(rt.selfOf(exec.agent?.id))
+    if (bot?.isolation === true && !ISOLATION_TOOLS.includes(exec.name)) return ISOLATION_REFUSAL
     if (exec.name === BLOCKING_QUESTION_TOOL) return `Bots cannot use ${BLOCKING_QUESTION_TOOL}. Ask with ask_user in your own chat, or ask in your reply.`
     const target = exec.arguments?.target
     if (SCHEDULE_TARGET_TOOLS.includes(exec.name) && target !== undefined && target !== 'this_session') return SCHEDULE_TARGET_REFUSAL

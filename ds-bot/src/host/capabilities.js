@@ -191,6 +191,9 @@ export function install(rt) {
     const target = targetRef ? rt.findBot(targetRef) : caller
     if (!target) throw new Error(`No Bot named ${targetRef}.`)
     if (target.id !== caller.id && !rt.isMain(callerId)) throw new Error('Only a Main Bot can change another Bot’s capabilities.')
+    // An isolation space Bot mounts nothing: MCP servers, skills and packs all bring
+    // tools, and the space exists to keep them away.
+    if (target.isolation === true && endpoint === 'attach') throw new Error(`${target.name} is in an isolation space: it cannot attach MCP servers, skills or packs.`)
     const item = own(ensureLibrary(), String(name ?? ''))
     if (!item) throw new Error(`No capability named ${name}.`)
     await setAttached(target, item.name, endpoint === 'attach')

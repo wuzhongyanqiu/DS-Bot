@@ -586,6 +586,9 @@ const ZH = {
 
   // Create Bot
   'Create Bot': '创建 Bot',
+  'Isolation space': '隔离空间',
+  Isolated: '隔离',
+  'Chat only: commands, files, the network and MCP tools are refused, and the Bot gets its own empty folder.': '只能聊天：命令、文件、网络和 MCP 工具都会被拒绝，Bot 会得到一个自己的空文件夹。',
   'Back to new chat': '返回新对话',
   Look: '形象',
   Shuffle: '随机',

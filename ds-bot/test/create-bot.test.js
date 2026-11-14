@@ -47,3 +47,12 @@ test('the suggested name skips taken names', () => {
   assert.equal(freshBotName(roster, 'Kimi'), 'Kimi 2')
   assert.equal(freshBotName(roster, 'Writer'), 'Writer')
 })
+
+test('the isolation choice rides on the create payload, and an ordinary create is unchanged', () => {
+  const look = { shape: 'star', color: 'blue' }
+  // Nothing is added when the box is untouched, so the ordinary create is byte-for-byte
+  // what it was before the isolation space existed.
+  assert.equal('isolation' in createPayload({ name: 'A', look, model: 'cloud/qwen-max' }), false)
+  assert.equal('isolation' in createPayload({ name: 'A', look, model: 'cloud/qwen-max', isolation: false }), false)
+  assert.equal(createPayload({ name: 'A', look, model: 'cloud/qwen-max', isolation: true }).isolation, true)
+})

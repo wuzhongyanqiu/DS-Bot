@@ -483,6 +483,13 @@ html[data-windows-titlebar]:not([data-fullscreen]) :is(.bt-pane,.bt-panel)::befo
 .bt-input:focus{border-color:var(--bt-line-2)}
 .bt-input-area{height:auto;min-height:96px;padding:8px 10px;line-height:18px;resize:vertical}
 .bt-note{font-size:12px;line-height:16px;color:var(--bt-ink-3)}
+/* Create Bot: the isolation space choice, a boxed switch with its own explanation. */
+.bt-space-choice{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--bt-line);border-radius:10px;background:var(--bt-card);cursor:pointer}
+.bt-space-choice input{flex:none;margin:2px 0 0;accent-color:var(--bt-accent,var(--bt-ink));width:15px;height:15px}
+.bt-space-copy{display:flex;flex-direction:column;gap:2px;min-width:0}
+.bt-space-title{font-size:13px;line-height:18px;font-weight:500}
+/* The sidebar row's isolation chip: visible at a glance, not a hover-only hint. */
+.bt-tag-lock{background:var(--bt-hover);color:var(--bt-ink-2);border:.5px solid var(--bt-line)}
 .bt-soft-sm{height:28px;padding:0 12px;font-size:12px}
 .bt-set-avatar{display:flex;justify-content:center;padding:4px 0}
 .bt-avatar-anchor{position:relative}

@@ -1,6 +1,9 @@
 // Roster: creating, changing, and deleting Bots and group chats, the Main Bot role, and
 // the first Main Bot of a new team.
-import { mkdir } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { mkdir, realpath } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { MAX_AVATAR_IMAGE, ROOM_MAX_MEMBERS, ROOM_MODES, ROOM_NAME_MAX, ROOM_NOTICE_MAX } from './constants.js'
 import { currentColor, isColor, normalize, splitRef, unquote } from './text.js'
 import { nameProblem } from '../shared/mentions.js'
@@ -48,6 +51,21 @@ export function install(rt) {
   const { ctx, defaults, state } = rt
 
   let bootstrapping = null
+
+  // An isolation space Bot gets a folder of its own that holds nothing. Its tools are
+  // refused outright (tools.js), so the folder marks the boundary; it is kept outside
+  // DSH's data, where Bots are never allowed to work.
+  const isolationRoot = () => rt.config.isolationRoot ?? join(homedir(), '.ds-bot-isolation')
+  async function makeIsolationFolder() {
+    const path = join(isolationRoot(), randomUUID())
+    await mkdir(path, { recursive: true })
+    return realpath(path).catch(() => path)
+  }
+  // The lowest permission preset DSH offers: read-only when it is one, else the first.
+  function lowestPreset() {
+    const options = rt.permissionCatalog?.()?.options ?? []
+    return (options.find(option => option.value === 'read-only') ?? options[0])?.value
+  }
 
   // The team folder is DS Bot's own: deleted, it is made again before a Session needs it.
   async function keepTeamFolder() {
@@ -145,10 +163,15 @@ export function install(rt) {
     return holdName('bot', cleanName, () => buildBot(cleanName, options))
   }
 
-  async function buildBot(cleanName, { role = '', instructions = '', color, brief = '', createdBy, main = false, avatar, model, effort, workDir, copyOf, pickModel = false }) {
+  async function buildBot(cleanName, { role = '', instructions = '', color, brief = '', createdBy, main = false, avatar, model, effort, workDir, copyOf, pickModel = false, isolation = false }) {
     const cleanAvatarValue = cleanAvatar(avatar)
     // The model is fixed at creation, so a later change of the DSH default leaves it alone.
     const modelRef = model ? await rt.resolveModel(model) : pickModel ? undefined : await rt.defaultBotModel()
+    // The team's own agents run their own tools outside this plugin's guard, so an
+    // isolation space Bot cannot be put on one: the boundary would not hold.
+    if (isolation === true && modelRef !== undefined && rt.isLocalAgentRoute?.(splitRef(modelRef)?.provider ?? '') === true) {
+      throw new Error('An isolation space Bot cannot run on a local agent, whose own tools would step outside the space')
+    }
     // A thinking level needs a model to resolve against; with none it would be dropped
     // silently, so the create fails before a Session is made.
     if (effort && modelRef === undefined) throw new Error('Pick a model before choosing a thinking level')
@@ -157,11 +180,18 @@ export function install(rt) {
     const effortId = modelRef === undefined ? undefined
       : effort === null || effort === '' ? undefined
       : (await rt.resolveEffort(modelRef, effort)) ?? await rt.defaultEffort(modelRef)
-    const dir = workDir === undefined || workDir === null ? undefined : await rt.cleanWorkDir(workDir)
-    const clash = dir === undefined ? undefined : await rt.privateClash(dir)
+    // An isolation space Bot never takes the user's folder: it gets an empty one of its
+    // own, made here, so nothing of the user's is ever in reach even by path.
+    const dir = isolation === true
+      ? await makeIsolationFolder()
+      : workDir === undefined || workDir === null ? undefined : await rt.cleanWorkDir(workDir)
+    const clash = isolation === true || dir === undefined ? undefined : await rt.privateClash(dir)
     if (clash) throw new Error(`${dir} is in or around the folder of ${clash.name}, a private Bot, so ${cleanName} cannot work there`)
     const id = await createSession(cleanName, { dir })
     try {
+      // DSH still loads the profile's sandbox; the lowest preset keeps its own guard at
+      // the floor too, even where this plugin's tool guard is not in the path.
+      const preset = isolation === true ? lowestPreset() : undefined
       state.bots[id] = {
         id,
         name: cleanName,
@@ -172,6 +202,8 @@ export function install(rt) {
         ...(modelRef ? { model: modelRef } : {}),
         ...(effortId ? { effort: effortId } : {}),
         ...(dir ? { workDir: dir } : {}),
+        ...(preset ? { permission: preset } : {}),
+        ...(isolation === true ? { isolation: true } : {}),
         instructions: String(instructions).trim(),
         createdAt: Date.now(),
         createdBy: createdBy ?? null,
@@ -193,21 +225,31 @@ export function install(rt) {
               ? `The user just created you and sent this first message:\n\n${brief}\n\nIntroduce yourself in one short line, then help with it.`
               : 'The user just created you. Greet the user in one short message, then ask in one short question what you should focus on.'
       const opener = `${kickoff}\n${OWN_RULES}`
-      const text = !main && language ? `${opener}\nWrite in ${language}.` : opener
+      const space = isolation === true
+        ? '\nYou live in an isolation space: you can chat, but every tool that runs commands, reads or writes files, uses the network or acts on the computer is refused. Do not promise to run or read anything.'
+        : ''
+      const text = !main && language ? `${opener}${space}\nWrite in ${language}.` : `${opener}${space}`
       const bot = state.bots[id]
       const greeting = { text, from: createdBy ?? null, ...(main ? { main: true } : {}) }
       // The Bot is saved by now; a failure here must not archive it in the catch below.
       const scopeTools = () => rt.resolveAgent(id)
         .catch(error => rt.warn('ds-bot: scoped tools for %s not applied: %s', cleanName, error))
+      // The saved preset reaches the Session's Agent once it resolves.
+      const applyPreset = async () => {
+        if (isolation !== true || bot.permission === undefined) return
+        await rt.applyPermission(bot, id).catch(error => rt.warn('ds-bot: isolation preset for %s not applied: %s', cleanName, error))
+      }
       if (modelRef === undefined) {
         bot.kickoff = greeting
         await rt.save()
         // The Session was resolved before the Bot existed, so its scoped tools land now.
         await scopeTools()
+        await applyPreset()
         return bot
       }
       await rt.save()
       await scopeTools()
+      await applyPreset()
       // The greeting runs on the Bot's own model, once its provider is registered.
       void rt.waitForModel(bot)
         .then(() => rt.applyModel(bot).catch(error => rt.warn('ds-bot: model for %s not applied: %s', cleanName, error)))
@@ -295,8 +337,10 @@ export function install(rt) {
     if (bot === undefined) throw new Error('Unknown Bot')
     if (bot.private === true) throw new Error(`${bot.name} is private, so it cannot be copied`)
     const served = (await rt.catalog()).some(entry => entry.ref === bot.model)
-    // A folder that went away since leaves the copy in the team workspace.
-    const workDir = bot.workDir !== undefined && await rt.isFolder(bot.workDir) ? bot.workDir : undefined
+    const isolated = bot.isolation === true
+    // A folder that went away since leaves the copy in the team workspace. A copy of an
+    // isolation space Bot gets a fresh empty folder of its own, never the original's.
+    const workDir = isolated ? undefined : bot.workDir !== undefined && await rt.isFolder(bot.workDir) ? bot.workDir : undefined
     // No await from here to createBot's check, so two copies at once get different names.
     return createBot({
       name: freshName(`${bot.name} copy`),
@@ -305,6 +349,7 @@ export function install(rt) {
       color: bot.color,
       avatar: bot.avatar,
       model: served ? bot.model : undefined,
+      isolation: isolated,
       // A copy of a Bot on the model's own default stays on it (null marks the
       // explicit Default pick); else the create would inherit the profile level.
       effort: served ? (bot.effort ?? null) : undefined,
@@ -316,6 +361,12 @@ export function install(rt) {
   async function updateBot(id, patch, actorId, fromSessionId) {
     const bot = rt.botOf(id)
     if (bot === undefined) throw new Error('Unknown Bot')
+    // An isolation space is a hard boundary, not a default: neither the Bot nor an
+    // instruction can lift it from inside, and the settings page cannot either.
+    if (bot.isolation === true) {
+      if (patch.permission !== undefined) throw new Error(`${bot.name} is in an isolation space: its permission stays at the lowest level`)
+      if (patch.workDir !== undefined) throw new Error(`${bot.name} is in an isolation space: it keeps its own empty folder`)
+    }
     if (patch.browserGrants !== undefined && actorId !== undefined) {
       throw new Error(`Only the user can set what ${bot.name} may do in the browser`)
     }
@@ -332,6 +383,11 @@ export function install(rt) {
     const modelRef = patch.model === undefined ? undefined
       : patch.model === null || patch.model === '' ? null
       : await rt.resolveModel(patch.model)
+    // A local agent runs its own tools, which this plugin's guard never sees; an
+    // isolation space Bot cannot be moved onto one.
+    if (bot.isolation === true && modelRef !== undefined && modelRef !== null && rt.isLocalAgentRoute?.(splitRef(modelRef)?.provider ?? '') === true) {
+      throw new Error(`${bot.name} is in an isolation space: a local agent would bring its own tools, so it cannot run on one`)
+    }
     // A new level resolves against the model the Bot will run on: the new one, the
     // model it keeps, or — the model cleared — the one it last ran on.
     const effortRef = modelRef === undefined ? bot.model ?? bot.appliedModel : modelRef ?? bot.appliedModel

@@ -55,6 +55,13 @@ export const ROOM_NAME_MAX = 60
 export const ROOM_NOTICE_MAX = 2000
 export const ROOM_MAX_MEMBERS = 12
 
+// A Bot created in an isolation space may chat and nothing else. These are the only
+// tools it is offered and allowed to call; the guard in tools.js refuses every other
+// name — shell, files, network, MCP, browser, jobs — so a line of instructions, a stale
+// tool list, or a newer plugin cannot widen it.
+export const ISOLATION_TOOLS = ['ask_user', 'show_view', 'read_own_chat']
+export const ISOLATION_REFUSAL = 'This Bot is in an isolation space: it can chat, but commands, files, the network and every other tool are off. Answer in words instead of running or reading anything.'
+
 // A team's one DSH Agent: a plain dsh entry in the sidebar, not a Bot. Its Sessions
 // are ordinary root Sessions, so the team tools must not be offered to them.
 export const AGENT_NAME = 'DSH Agent'

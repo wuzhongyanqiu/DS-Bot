@@ -614,6 +614,9 @@ var ZH = {
   "Add a notice in group settings": "在群设置里添加群公告",
   // Create Bot
   "Create Bot": "创建 Bot",
+  "Isolation space": "隔离空间",
+  Isolated: "隔离",
+  "Chat only: commands, files, the network and MCP tools are refused, and the Bot gets its own empty folder.": "只能聊天：命令、文件、网络和 MCP 工具都会被拒绝，Bot 会得到一个自己的空文件夹。",
   "Back to new chat": "返回新对话",
   Look: "形象",
   Shuffle: "随机",
@@ -3531,6 +3534,13 @@ html[data-windows-titlebar]:not([data-fullscreen]) :is(.bt-pane,.bt-panel)::befo
 .bt-input:focus{border-color:var(--bt-line-2)}
 .bt-input-area{height:auto;min-height:96px;padding:8px 10px;line-height:18px;resize:vertical}
 .bt-note{font-size:12px;line-height:16px;color:var(--bt-ink-3)}
+/* Create Bot: the isolation space choice, a boxed switch with its own explanation. */
+.bt-space-choice{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--bt-line);border-radius:10px;background:var(--bt-card);cursor:pointer}
+.bt-space-choice input{flex:none;margin:2px 0 0;accent-color:var(--bt-accent,var(--bt-ink));width:15px;height:15px}
+.bt-space-copy{display:flex;flex-direction:column;gap:2px;min-width:0}
+.bt-space-title{font-size:13px;line-height:18px;font-weight:500}
+/* The sidebar row's isolation chip: visible at a glance, not a hover-only hint. */
+.bt-tag-lock{background:var(--bt-hover);color:var(--bt-ink-2);border:.5px solid var(--bt-line)}
 .bt-soft-sm{height:28px;padding:0 12px;font-size:12px}
 .bt-set-avatar{display:flex;justify-content:center;padding:4px 0}
 .bt-avatar-anchor{position:relative}
@@ -15397,7 +15407,7 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
     actions.openMenu({ kind: "bot", id, x: event.clientX, y: event.clientY });
   };
   const pinned = bot.pinned === true && !tile;
-  const label = [bot.name, main ? t("Main Bot") : "", pinned ? t("Pinned") : "", running || away ? t("Working") : "", waitsFor, approval ? t("Waiting for your approval") : alert ? t("Waiting for your answer") : "", unread ? t("Unread activity") : ""].filter(Boolean).join(", ");
+  const label = [bot.name, main ? t("Main Bot") : "", bot.isolation ? t("Isolation space") : "", pinned ? t("Pinned") : "", running || away ? t("Working") : "", waitsFor, approval ? t("Waiting for your approval") : alert ? t("Waiting for your answer") : "", unread ? t("Unread activity") : ""].filter(Boolean).join(", ");
   if (tile && wide) {
     return (0, import_react35.createElement)("div", { className: "bt-tile-wrap" }, (0, import_react35.createElement)(
       "button",
@@ -15436,7 +15446,7 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
     wide ? (0, import_react35.createElement)(
       "span",
       { className: "bt-row-body" },
-      (0, import_react35.createElement)("span", { className: "bt-row-name" }, (0, import_react35.createElement)("span", { className: "bt-row-title" }, bot.name), bot.engine ? (0, import_react35.createElement)(AgentBadge, { engine: bot.engine }) : null, pinned ? (0, import_react35.createElement)(PinMark) : null, (0, import_react35.createElement)(JobsBadge, { useJobs, sessionIds: [part] })),
+      (0, import_react35.createElement)("span", { className: "bt-row-name" }, (0, import_react35.createElement)("span", { className: "bt-row-title" }, bot.name), bot.isolation ? (0, import_react35.createElement)("span", { className: "bt-tag bt-tag-lock", title: t("Isolation space") }, t("Isolated")) : null, bot.engine ? (0, import_react35.createElement)(AgentBadge, { engine: bot.engine }) : null, pinned ? (0, import_react35.createElement)(PinMark) : null, (0, import_react35.createElement)(JobsBadge, { useJobs, sessionIds: [part] })),
       runningLine ? (0, import_react35.createElement)("span", { className: "bt-row-preview" }, runningLine) : awayLine ? (0, import_react35.createElement)("span", { className: "bt-row-preview" }, awayLine) : waitsFor ? (0, import_react35.createElement)("span", { className: "bt-row-preview" }, waitsFor) : preview ? (0, import_react35.createElement)("span", { className: "bt-row-preview" }, preview) : null
     ) : null,
     wide && unread && !active ? (0, import_react35.createElement)("span", { className: "bt-unread", "aria-hidden": true }) : !wide && !active && (alert || unread) ? (0, import_react35.createElement)("span", { className: `bt-dot${alert ? " bt-dot-wait" : ""}`, "aria-hidden": true }) : null
@@ -18204,12 +18214,13 @@ function startModel(roster) {
   const usable = (roster.models ?? []).filter((model) => model.needsKey !== true && !isLocalRoute(model.ref));
   return (usable.find((model) => model.ref === roster.prefs?.defaultBotModel) ?? usable.find((model) => model.ref === roster.defaultModel) ?? usable[0])?.ref ?? "";
 }
-function createPayload({ name, look, image, model, effort, brief }) {
+function createPayload({ name, look, image, model, effort, brief, isolation = false }) {
   const badge = image === void 0 && isLocalRoute(model) ? agentAvatar(String(model).split("/")[0]) : void 0;
   const payload = { name, color: look.color, avatar: image ? { shape: look.shape, image } : badge !== void 0 ? { shape: look.shape, image: badge.image } : { shape: look.shape } };
   if (model) payload.model = model;
   if (effort !== void 0) payload.effort = effort;
   if (brief) payload.brief = brief;
+  if (isolation) payload.isolation = true;
   return payload;
 }
 
@@ -18229,6 +18240,7 @@ function CreateBot({ roster, actions, start, brief = "", onBack, canGoBack, onCr
   const [model, setModel] = (0, import_react41.useState)(() => startModel(roster));
   const [effort, setEffort] = (0, import_react41.useState)(void 0);
   const [busy, setBusy] = (0, import_react41.useState)(false);
+  const [isolation, setIsolation] = (0, import_react41.useState)(false);
   const [error, setError] = (0, import_react41.useState)("");
   const fileRef = (0, import_react41.useRef)(null);
   const frame = (0, import_react41.useRef)(null);
@@ -18245,7 +18257,7 @@ function CreateBot({ roster, actions, start, brief = "", onBack, canGoBack, onCr
     setError("");
     setBusy(true);
     try {
-      const bot = await actions.createBot(createPayload({ name: finalName, look, image, model, effort, brief }));
+      const bot = await actions.createBot(createPayload({ name: finalName, look, image, model, effort, brief, isolation }));
       onCreated(bot);
     } catch (failure) {
       setError(failure?.message ?? String(failure));
@@ -18330,6 +18342,24 @@ function CreateBot({ roster, actions, start, brief = "", onBack, canGoBack, onCr
         }
       }),
       problem ? (0, import_react41.createElement)("span", { className: "bt-note bt-danger" }, hostText(problem)) : clash ? (0, import_react41.createElement)("span", { className: "bt-note bt-danger" }, t("A Bot named {name} already exists", { name: finalName })) : null
+    ),
+    // Isolation is chosen here, before the Bot exists: there is nothing to switch off
+    // afterwards, and a hard boundary is what the user asked for.
+    (0, import_react41.createElement)(
+      "label",
+      { className: "bt-space-choice" },
+      (0, import_react41.createElement)("input", {
+        type: "checkbox",
+        checked: isolation,
+        "aria-label": t("Isolation space"),
+        onChange: (event) => setIsolation(event.target.checked)
+      }),
+      (0, import_react41.createElement)(
+        "span",
+        { className: "bt-space-copy" },
+        (0, import_react41.createElement)("span", { className: "bt-space-title" }, t("Isolation space")),
+        (0, import_react41.createElement)("span", { className: "bt-note" }, t("Chat only: commands, files, the network and MCP tools are refused, and the Bot gets its own empty folder."))
+      )
     ),
     (0, import_react41.createElement)(
       "div",

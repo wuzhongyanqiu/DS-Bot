@@ -28,6 +28,7 @@ export function CreateBot({ roster, actions, start, brief = '', onBack, canGoBac
   const [model, setModel] = useState(() => startModel(roster))
   const [effort, setEffort] = useState(undefined)
   const [busy, setBusy] = useState(false)
+  const [isolation, setIsolation] = useState(false)
   const [error, setError] = useState('')
   const fileRef = useRef(null)
   const frame = useRef(null)
@@ -43,7 +44,7 @@ export function CreateBot({ roster, actions, start, brief = '', onBack, canGoBac
     setError('')
     setBusy(true)
     try {
-      const bot = await actions.createBot(createPayload({ name: finalName, look, image, model, effort, brief }))
+      const bot = await actions.createBot(createPayload({ name: finalName, look, image, model, effort, brief, isolation }))
       onCreated(bot)
     } catch (failure) {
       setError(failure?.message ?? String(failure))
@@ -86,6 +87,16 @@ export function CreateBot({ roster, actions, start, brief = '', onBack, canGoBac
       }),
       problem ? h('span', { className: 'bt-note bt-danger' }, hostText(problem))
         : clash ? h('span', { className: 'bt-note bt-danger' }, t('A Bot named {name} already exists', { name: finalName })) : null),
+    // Isolation is chosen here, before the Bot exists: there is nothing to switch off
+    // afterwards, and a hard boundary is what the user asked for.
+    h('label', { className: 'bt-space-choice' },
+      h('input', {
+        type: 'checkbox', checked: isolation, 'aria-label': t('Isolation space'),
+        onChange: event => setIsolation(event.target.checked),
+      }),
+      h('span', { className: 'bt-space-copy' },
+        h('span', { className: 'bt-space-title' }, t('Isolation space')),
+        h('span', { className: 'bt-note' }, t('Chat only: commands, files, the network and MCP tools are refused, and the Bot gets its own empty folder.')))),
     h('div', { className: 'bt-field' },
       h('span', { className: 'bt-field-label' }, t('Model')),
       h(ModelMenu, { bot: { id: 'new-bot', name: finalName, model: model || undefined, effort }, roster, actions, wide: true, onPick: ref => { setModel(ref); setEffort(undefined) }, onPickEffort: picked => setEffort(picked ?? null) }),
