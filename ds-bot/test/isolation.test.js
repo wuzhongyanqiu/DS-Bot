@@ -189,3 +189,42 @@ test('an isolation space cannot be moved onto a local agent, whose tools bypass 
   rt.isLocalAgentRoute = provider => provider === 'claude-code'
   await assert.rejects(rt.updateBot('iso', { model: 'claude-code/default' }), /local agent/)
 })
+
+test('the create_bot tool takes an isolation flag and creates the same hard-boundary Bot', async (t) => {
+  const { rt, sets, isolationRoot, stop } = await setup()
+  t.after(stop)
+  const tool = rt.teamTools.find(def => def.name === 'create_bot')
+  assert.ok(tool, 'create_bot is served')
+  const reply = await tool.execute({
+    name: 'Tool Made', role: 'Chat', instructions: 'Talk things through.',
+    model: 'deepseek/deepseek-v4-flash', isolation: true,
+  }, { agent: { id: 'chief' } })
+  assert.match(reply, /isolation space/)
+  const bot = Object.values(rt.state.bots).find(entry => entry.name === 'Tool Made')
+  assert.ok(bot, 'the Bot was created')
+  assert.equal(bot.isolation, true)
+  assert.equal(bot.permission, 'read-only')
+  assert.deepEqual(bot.capabilities, [])
+  assert.ok(bot.workDir.startsWith(realpathSync(isolationRoot)))
+  assert.deepEqual(sets, [{ sessionId: bot.id, name: 'read-only' }])
+  // The hard boundary is the same one the form makes: it cannot be lifted afterwards.
+  await assert.rejects(rt.updateBot(bot.id, { permission: 'danger-full-access' }), /isolation space/)
+})
+
+test('the create_bot tool refuses a working folder with isolation, and an ordinary create is unchanged', async (t) => {
+  const { rt, stop } = await setup()
+  t.after(stop)
+  const tool = rt.teamTools.find(def => def.name === 'create_bot')
+  const refused = await tool.execute({
+    name: 'No Folder', role: 'Chat', instructions: '', isolation: true, work_dir: tmpdir(),
+  }, { agent: { id: 'chief' } })
+  assert.match(refused, /own empty folder/)
+  assert.equal(Object.values(rt.state.bots).some(entry => entry.name === 'No Folder'), false)
+  const reply = await tool.execute({
+    name: 'Normal Tool', role: 'Work', instructions: '', model: 'deepseek/deepseek-v4-flash',
+  }, { agent: { id: 'chief' } })
+  assert.doesNotMatch(reply, /isolation space/)
+  const bot = Object.values(rt.state.bots).find(entry => entry.name === 'Normal Tool')
+  assert.equal(bot.isolation, undefined)
+  assert.equal(bot.permission, undefined)
+})

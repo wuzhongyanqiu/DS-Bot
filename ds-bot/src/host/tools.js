@@ -327,12 +327,17 @@ export function install(rt) {
       effort: { type: 'string', description: 'Thinking level for the model, as list_bot_models shows it. Only when the user names one.' },
       work_dir: WORK_DIR_PARAM,
       avatar: AVATAR_PARAM,
+      isolation: { type: 'boolean', description: 'Create the Bot in an isolation space: it can chat only, and shell, files, the network, MCP tools and capabilities are refused. It keeps its own empty folder, its permission stays at the lowest level, and neither it nor update_bot can lift that. Only when the user asks for an isolated Bot.' },
     },
     output,
     async execute(args, exec) {
       await rt.load()
       if (!rt.isMain(rt.selfOf(exec.agent?.id))) return 'Only the Main Bot can create Bots. Ask the Main Bot instead.'
       try {
+        const isolating = args.isolation === true
+        // An isolation space Bot keeps the empty folder DS Bot makes for it; a folder
+        // named here would be a place its tools could never reach, so it is refused.
+        if (isolating && args.work_dir) return 'Could not create the Bot: an isolation space Bot keeps its own empty folder, so it takes no working folder.'
         const avatar = args.avatar ? await readAvatar(String(args.avatar), { baseDir: rt.sessionFolder?.(exec.agent?.session ?? exec.agent), isData: rt.inData }) : undefined
         const workDir = args.work_dir ? await rt.cleanWorkDir(args.work_dir) : undefined
         const name = String(args.name ?? '').trim()
@@ -344,7 +349,8 @@ export function install(rt) {
         const served = new Set((await rt.catalog()).filter(entry => entry.needsKey !== true).map(entry => entry.ref))
         const fallback = [state.prefs.defaultBotModel, creator?.model].find(ref => ref && served.has(ref))
         const model = args.model || fallback
-        const bot = await rt.createBot({ ...args, avatar: avatar === undefined ? undefined : { image: avatar }, model, workDir, effort: args.effort, createdBy: creator?.id })
+        const bot = await rt.createBot({ ...args, isolation: isolating, avatar: avatar === undefined ? undefined : { image: avatar }, model, workDir, effort: args.effort, createdBy: creator?.id })
+        if (isolating) return `Created ${bot.name} in an isolation space: it can chat, and shell, files and the network are refused. It is greeting the user now.`
         return `Created ${bot.name}${workDir ? `, working in ${workDir}` : ''}. It is greeting the user now.`
       } catch (error) {
         return `Could not create the Bot: ${error.message}`
