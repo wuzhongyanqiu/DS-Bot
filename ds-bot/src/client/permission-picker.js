@@ -11,7 +11,7 @@ export const presetName = (value, catalog) => (LABELS[value] ? t(LABELS[value]) 
 // The presets DeepSeek Harness offers, as one segmented choice. A pick shows at once
 // and holds until the saved value catches up, or falls back when `onPick` resolves
 // false. `repick` lets the shown preset be picked again.
-export function PermissionPicker({ catalog, saved, onPick, repick = false }) {
+export function PermissionPicker({ catalog, saved, onPick, repick = false, disabled = false }) {
   const [pending, setPending] = useState(null)
   // One save runs at a time. A pick made while one is in flight waits as `latest`
   // (newer ones overwrite it), so a request that settles cannot clear or reorder a
@@ -40,7 +40,7 @@ export function PermissionPicker({ catalog, saved, onPick, repick = false }) {
   }
   return h(Segmented, { label: t('Permissions'), value: current },
     catalog.options.map(option => h('button', {
-      key: option.value, type: 'button', 'aria-pressed': option.value === current,
+      key: option.value, type: 'button', 'aria-pressed': option.value === current, disabled,
       title: option.description, onClick: () => pick(option.value),
       className: presetDanger(option.value) ? 'bt-perm-danger' : undefined,
     }, presetName(option.value, catalog))))

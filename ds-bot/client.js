@@ -617,6 +617,9 @@ var ZH = {
   "Isolation space": "隔离空间",
   Isolated: "隔离",
   "Chat only: commands, files, the network and MCP tools are refused, and the Bot gets its own empty folder.": "只能聊天：命令、文件、网络和 MCP 工具都会被拒绝，Bot 会得到一个自己的空文件夹。",
+  "Isolation space: the permission stays at the lowest level.": "隔离空间：权限固定在最低档，不能修改。",
+  "Isolation space: the folder stays at its own empty folder.": "隔离空间：工作目录固定为它自己的空目录，不能修改。",
+  "Isolation space: MCP servers, skills and packs stay off.": "隔离空间：MCP、技能和插件包保持关闭，不能挂载。",
   "Back to new chat": "返回新对话",
   Look: "形象",
   Shuffle: "随机",
@@ -10495,14 +10498,17 @@ function BotCapabilitiesCard({ bot, roster, actions, run: run2, Card: Card3, Swi
   const attached = new Set(bot.capabilities ?? []);
   const statuses = roster.capabilityStatuses?.[bot.id] ?? {};
   if (items.length === 0) return null;
+  const isolated = bot.isolation === true;
   return (0, import_react22.createElement)(
     Card3,
     { title: t("Capabilities") },
+    isolated ? (0, import_react22.createElement)("div", { className: "bt-set-hint" }, t("Isolation space: MCP servers, skills and packs stay off.")) : null,
     items.map((item) => (0, import_react22.createElement)(SwitchRow2, {
       key: item.name,
       label: item.name,
       hint: attached.has(item.name) ? statusText(statuses[item.name]) : void 0,
       on: attached.has(item.name),
+      disabled: isolated,
       onChange: (enabled) => void run2(actions.setBotCapability(bot.id, item.name, enabled))
     }))
   );
@@ -11459,8 +11465,13 @@ function BotSettingsForm({ bot, roster, actions, run: run2 }) {
       (0, import_react25.createElement)(
         "div",
         { className: "bt-set-row bt-bs-row" },
-        (0, import_react25.createElement)("span", { className: "bt-set-copy" }, (0, import_react25.createElement)("span", { className: "bt-bs-label" }, t("Folder"))),
-        (0, import_react25.createElement)(FolderMenu, { value: bot.workDir, actions, run: run2, onPick: (workDir) => save({ workDir }) })
+        (0, import_react25.createElement)(
+          "span",
+          { className: "bt-set-copy" },
+          (0, import_react25.createElement)("span", { className: "bt-bs-label" }, t("Folder")),
+          bot.isolation === true ? (0, import_react25.createElement)("span", { className: "bt-set-hint" }, t("Isolation space: the folder stays at its own empty folder.")) : null
+        ),
+        (0, import_react25.createElement)(FolderMenu, { value: bot.workDir, actions, run: run2, disabled: bot.isolation === true, onPick: (workDir) => save({ workDir }) })
       )
     ),
     (0, import_react25.createElement)(
@@ -19091,7 +19102,7 @@ var LABELS = { "read-only": "Read only", "workspace-write": "Workspace", "danger
 var DANGER = /* @__PURE__ */ new Set(["danger-full-access"]);
 var presetDanger = (value) => DANGER.has(value);
 var presetName = (value, catalog) => LABELS[value] ? t(LABELS[value]) : catalog?.options?.find((option) => option.value === value)?.name ?? value;
-function PermissionPicker({ catalog, saved, onPick, repick = false }) {
+function PermissionPicker({ catalog, saved, onPick, repick = false, disabled = false }) {
   const [pending, setPending] = (0, import_react45.useState)(null);
   const flight = (0, import_react45.useRef)({ value: void 0, latest: void 0 });
   (0, import_react45.useEffect)(() => {
@@ -19128,6 +19139,7 @@ function PermissionPicker({ catalog, saved, onPick, repick = false }) {
       key: option.value,
       type: "button",
       "aria-pressed": option.value === current,
+      disabled,
       title: option.description,
       onClick: () => pick2(option.value),
       className: presetDanger(option.value) ? "bt-perm-danger" : void 0
@@ -24645,12 +24657,14 @@ var EMPTY_TABS = { ids: [], active: null };
 function PermissionRow({ bot, roster, actions, run: run2 }) {
   const catalog = roster.permissions;
   if (!catalog?.options?.length) return null;
+  const isolated = bot.isolation === true;
   return (0, import_react59.createElement)(
     "div",
     { className: "bt-drawer-permission" },
     (0, import_react59.createElement)("div", { className: "bt-section-title" }, t("Permissions")),
     // A Bot without its own preset may run on another one set in DSH, so its first pick always applies.
-    (0, import_react59.createElement)(PermissionPicker, { catalog, saved: bot.permission ?? catalog.defaultPreset, repick: bot.permission === void 0, onPick: (permission) => run2(actions.updateBot(bot.id, { permission })) })
+    (0, import_react59.createElement)(PermissionPicker, { catalog, saved: bot.permission ?? catalog.defaultPreset, repick: bot.permission === void 0, disabled: isolated, onPick: (permission) => run2(actions.updateBot(bot.id, { permission })) }),
+    isolated ? (0, import_react59.createElement)("div", { className: "bt-set-hint" }, t("Isolation space: the permission stays at the lowest level.")) : null
   );
 }
 function RunStats({ bot, part, running, actions }) {

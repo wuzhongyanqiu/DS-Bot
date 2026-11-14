@@ -361,11 +361,12 @@ export function install(rt) {
   async function updateBot(id, patch, actorId, fromSessionId) {
     const bot = rt.botOf(id)
     if (bot === undefined) throw new Error('Unknown Bot')
-    // An isolation space is a hard boundary, not a default: neither the Bot nor an
-    // instruction can lift it from inside, and the settings page cannot either.
-    if (bot.isolation === true) {
-      if (patch.permission !== undefined) throw new Error(`${bot.name} is in an isolation space: its permission stays at the lowest level`)
-      if (patch.workDir !== undefined) throw new Error(`${bot.name} is in an isolation space: it keeps its own empty folder`)
+    // An isolation space locks what the Bot may touch, not who it is: its profile and
+    // memory stay editable. Only a preset other than the one it already holds, or a
+    // different folder, is refused. A patch that repeats the current value is allowed,
+    // so a form that sends the whole record cannot make an ordinary edit fail.
+    if (bot.isolation === true && patch.permission !== undefined && String(patch.permission) !== bot.permission) {
+      throw new Error(`${bot.name} is in an isolation space: its permission stays at the lowest level`)
     }
     if (patch.browserGrants !== undefined && actorId !== undefined) {
       throw new Error(`Only the user can set what ${bot.name} may do in the browser`)
@@ -378,6 +379,9 @@ export function install(rt) {
     // unchanged too.
     const moving = patch.workDir !== undefined
     const workDir = moving ? await rt.cleanWorkDir(patch.workDir ?? '') : undefined
+    if (bot.isolation === true && moving && workDir !== bot.workDir) {
+      throw new Error(`${bot.name} is in an isolation space: it keeps its own empty folder`)
+    }
     const flag = patch.private === undefined ? undefined : patch.private === true
     await rt.checkPrivacyChange(bot, { flag, moving, workDir })
     const modelRef = patch.model === undefined ? undefined

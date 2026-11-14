@@ -381,6 +381,11 @@ export function install(rt) {
       const bot = args.bot ? rt.findBot(args.bot) : caller
       if (bot === undefined) return `No Bot named ${args.bot}.`
       if (bot.id !== caller.id && !rt.isMain(self)) return 'Only a Main Bot can change another Bot. Leave out bot to change yourself, or ask a Main Bot with message_bot.'
+      // The folder is part of the isolation space, not a setting: refuse before any
+      // approval card is raised for a folder the Bot could never reach.
+      if (bot.isolation === true && typeof args.work_dir === 'string') {
+        return `${bot.name} is in an isolation space: it keeps its own empty folder.`
+      }
       try {
         const { name: newName, role, instructions, color, model, effort } = args
         let image

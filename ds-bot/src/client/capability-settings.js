@@ -156,12 +156,15 @@ export function BotCapabilitiesCard({ bot, roster, actions, run, Card, SwitchRow
   const attached = new Set(bot.capabilities ?? [])
   const statuses = roster.capabilityStatuses?.[bot.id] ?? {}
   if (items.length === 0) return null
+  const isolated = bot.isolation === true
   return h(Card, { title: t('Capabilities') },
+    isolated ? h('div', { className: 'bt-set-hint' }, t('Isolation space: MCP servers, skills and packs stay off.')) : null,
     items.map(item => h(SwitchRow, {
       key: item.name,
       label: item.name,
       hint: attached.has(item.name) ? statusText(statuses[item.name]) : undefined,
       on: attached.has(item.name),
+      disabled: isolated,
       onChange: enabled => void run(actions.setBotCapability(bot.id, item.name, enabled)),
     })))
 }

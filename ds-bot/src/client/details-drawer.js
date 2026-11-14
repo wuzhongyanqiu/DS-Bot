@@ -43,10 +43,12 @@ const EMPTY_TABS = { ids: [], active: null }
 function PermissionRow({ bot, roster, actions, run }) {
   const catalog = roster.permissions
   if (!catalog?.options?.length) return null
+  const isolated = bot.isolation === true
   return h('div', { className: 'bt-drawer-permission' },
     h('div', { className: 'bt-section-title' }, t('Permissions')),
     // A Bot without its own preset may run on another one set in DSH, so its first pick always applies.
-    h(PermissionPicker, { catalog, saved: bot.permission ?? catalog.defaultPreset, repick: bot.permission === undefined, onPick: permission => run(actions.updateBot(bot.id, { permission })) }))
+    h(PermissionPicker, { catalog, saved: bot.permission ?? catalog.defaultPreset, repick: bot.permission === undefined, disabled: isolated, onPick: permission => run(actions.updateBot(bot.id, { permission })) }),
+    isolated ? h('div', { className: 'bt-set-hint' }, t('Isolation space: the permission stays at the lowest level.')) : null)
 }
 
 // The current part's turns, speed, cache hits and context, for a window without DSH's
