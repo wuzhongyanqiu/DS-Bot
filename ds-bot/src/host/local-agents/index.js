@@ -115,8 +115,11 @@ export function install(rt) {
     },
   })
 
-  const supported = () => typeof ctx.llm?.registerAdapter === 'function'
-  const router = attachRoutes({ llm: ctx.llm, adapter, log: message => ctx.logger?.warn?.(`ds-bot: ${message}`) })
+  // Read on use: a newer DSH resolves an injected service on access and refuses one
+  // before the plugin's context is active, which would fail the whole team's start.
+  const llmService = () => { try { return ctx.llm } catch { return undefined } }
+  const supported = () => typeof llmService()?.registerAdapter === 'function'
+  const router = attachRoutes({ llm: llmService, adapter, log: message => ctx.logger?.warn?.(`ds-bot: ${message}`) })
   function applyRoutes() {
     if (!supported()) return
     // Off, no local-agent route is offered at all; the custom agents stay on

@@ -3,11 +3,14 @@
 // route out or take the whole team down; the taken ids are filtered out first
 // and named once in the log, and the rest register as usual.
 export function attachRoutes({ llm, adapter, log = () => {} }) {
+  // A newer DSH resolves an injected service on property access and throws before the
+  // plugin's context is active, so a function is read when routes are applied, not now.
+  const service = typeof llm === 'function' ? llm : () => llm
   let handle
   let owned = new Set()
   let warned = ''
   const register = (routes) => {
-    handle = llm.registerAdapter(routes, adapter)
+    handle = service().registerAdapter(routes, adapter)
     owned = new Set(routes)
   }
   const replace = (routes) => {
@@ -19,9 +22,10 @@ export function attachRoutes({ llm, adapter, log = () => {} }) {
     // Registers the free routes, or swaps to them when already registered.
     // Returns whether an adapter now serves at least one route.
     apply(wanted) {
-      if (llm === undefined || typeof llm.registerAdapter !== 'function') return false
+      const current = service()
+      if (current === undefined || typeof current.registerAdapter !== 'function') return false
       const list = [...new Set(wanted)]
-      const taken = new Set((llm.listProviders?.() ?? []).map(provider => provider.id).filter(id => !owned.has(id)))
+      const taken = new Set((current.listProviders?.() ?? []).map(provider => provider.id).filter(id => !owned.has(id)))
       const skipped = list.filter(route => taken.has(route))
       const routes = list.filter(route => !taken.has(route))
       // One line per change, not one per scan.
