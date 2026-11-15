@@ -4,7 +4,7 @@ import { MicIcon, CloseIcon } from './icons.js'
 import { BotMark, RoomAvatar } from './mark.js'
 import { speechApi, useDictation } from './composer.js'
 import { Shimmer } from './cells.js'
-import { useEscape, usePaneLeft } from './overlay-hooks.js'
+import { useEscape } from './overlay-hooks.js'
 import { call } from './api.js'
 import { t } from './i18n.js'
 import { openCapture, preparationStep, speechCatalog, transcribeWave, turnDetector } from './speech.js'
@@ -96,7 +96,7 @@ function useMicLevel(enabled) {
   return level
 }
 
-export function VoiceMode({ sessionId, roster, actions, useSessions, useSessionStatus }) {
+export function VoiceMode({ sessionId, paneLeft, roster, actions, useSessions, useSessionStatus }) {
   const bot = roster.byId[sessionId]
   const room = roster.roomsById[sessionId]
   const name = bot?.name ?? room?.name ?? t('Bot')
@@ -151,7 +151,6 @@ export function VoiceMode({ sessionId, roster, actions, useSessions, useSessionS
     element.onerror = () => finish(new Error('speech playback failed'))
     element.play().catch(finish)
   })
-  const paneLeft = usePaneLeft()
   const close = () => { turn.current += 1; stopAudio(); window.speechSynthesis?.cancel(); actions.closeVoice() }
   useEscape(close)
   const submit = (text) => {

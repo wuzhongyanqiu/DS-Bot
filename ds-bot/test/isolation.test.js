@@ -318,7 +318,7 @@ test('an isolation space can read team memory and view it, but cannot write or a
   const tool = name => rt.teamTools.find(def => def.name === name)
   // The shared memory exists and the Chief may write it; the isolation space reads it
   // read-only, and cannot write to it.
-  await tool('remember').execute({ text: 'The team ships on Friday', scope: 'team' }, { agent: { id: 'chief' } })
+  await tool('remember').execute({ text: 'The team ships on Friday', scope: 'team', always: true }, { agent: { id: 'chief' } })
   assert.match(await tool('remember').execute({ text: 'Likes tea' }, { agent: { id: 'iso' } }), /^Saved to your memory/)
   await assert.rejects(tool('remember').execute({ text: 'Ships on Monday now', scope: 'team' }, { agent: { id: 'iso' } }), /isolation space/)
   const recalled = await tool('recall').execute({}, { agent: { id: 'iso' } })

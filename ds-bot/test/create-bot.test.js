@@ -18,9 +18,9 @@ test('the form starts on the team default model, then the DSH default, else the 
 })
 
 test('the form never starts on a local-agent route; those belong to abot menus', () => {
-  const local = [{ ref: 'claude-code/default', name: 'Claude Code', providerName: 'Claude Code' }, ...models]
-  assert.equal(startModel({ models: local, defaultModel: 'claude-code/default' }), 'ollama/ds-flash')
-  assert.equal(startModel({ models: local, defaultModel: 'claude-code/default', prefs: { defaultBotModel: 'claude-code/default' } }), 'ollama/ds-flash')
+  const local = [{ ref: 'local-claude-code/default', name: 'Claude Code', providerName: 'Claude Code' }, ...models]
+  assert.equal(startModel({ models: local, defaultModel: 'local-claude-code/default' }), 'ollama/ds-flash')
+  assert.equal(startModel({ models: local, defaultModel: 'local-claude-code/default', prefs: { defaultBotModel: 'local-claude-code/default' } }), 'ollama/ds-flash')
 })
 
 test('the form never starts on a model whose provider has no key, and starts on none when no model is usable', () => {

@@ -33,6 +33,7 @@ const MODE_PARAM = {
   description: '"everyone": every member answers a plain message in turn, admin first. "admin" (the default): a plain message goes to the admin, who calls others with @Name. @mentions always choose who answers.',
 }
 const WORK_DIR_PARAM = { type: 'string', description: 'Full path of the folder to work in, where commands and file tools start. Only when the user asks for it' }
+const SECTION_PARAM = { type: 'string', description: 'Sidebar section name to group Bots and group chats that work on the same project together; creates the section if it does not exist' }
 const AVATAR_PARAM = {
   type: 'string',
   description: 'Profile picture: a local image path (a relative path starts in your working folder) or a data URL. PNG, JPEG, WebP, or GIF; square, 256x256 recommended, up to 120 KB. Images are not resized.',
@@ -48,11 +49,15 @@ export function install(rt) {
     return roomId ? { fromRoomId: roomId } : {}
   }
 
+  const sectionNameOf = id => (state.sections ?? []).find(sec => sec.id === id)?.name
+
   const roomLine = (room, self) => {
     const members = room.members.map(rt.botOf).filter(Boolean)
       .map(bot => `${bot.name}${bot.id === room.admin ? ' (admin)' : ''}${bot.id === self ? ' (you)' : ''}`)
+    const section = sectionNameOf(room.sectionId)
     const parts = [
       `members: ${members.join(', ')}`,
+      section ? `section: ${section}` : '',
       room.mode === 'admin' && room.admin ? 'plain messages go to the admin first' : 'every member replies in turn',
       room.notice ? `notice: ${room.notice.split('\n')[0].slice(0, 100)}` : '',
       room.workDir ? `members work in ${room.workDir} here` : '',
@@ -76,7 +81,8 @@ export function install(rt) {
         // A private Bot is only named to the others: not what it does, where, or what now.
         if (bot.private === true && bot.id !== self) return `- ${bot.name} (${[bot.role, 'private Bot, closed to other Bots'].filter(Boolean).join(', ')})`
         const model = bot.appliedModel ?? bot.model
-        const tags = [bot.role, model ? `model ${model}` : '', bot.workDir ? `works in ${bot.workDir}` : '', rt.isMain(bot.id) ? 'Main Bot' : '', bot.private === true ? 'private' : '', bot.id === self ? 'you' : ''].filter(Boolean).join(', ')
+        const section = sectionNameOf(bot.sectionId)
+        const tags = [bot.role, section ? `section "${section}"` : '', model ? `model ${model}` : '', bot.workDir ? `works in ${bot.workDir}` : '', rt.isMain(bot.id) ? 'Main Bot' : '', bot.private === true ? 'private' : '', bot.id === self ? 'you' : ''].filter(Boolean).join(', ')
         const job = bot.instructions ? ` — ${bot.instructions.split('\n')[0].slice(0, 120)}` : ''
         const now = bot.id === self ? '' : `\n  now: ${rt.statusOf(bot.id)}`
         return `- ${bot.name}${tags ? ` (${tags})` : ''}${job}${now}`
@@ -319,6 +325,7 @@ export function install(rt) {
       model: { type: 'string', description: 'Model the Bot runs on, as provider/model or a model id. Only when the user names one; otherwise the team default model from DS Bot settings, or the model you run on.' },
       effort: { type: 'string', description: 'Thinking level for the model, as list_bot_models shows it. Only when the user names one.' },
       work_dir: WORK_DIR_PARAM,
+      section: SECTION_PARAM,
       avatar: AVATAR_PARAM,
       isolation: { type: 'boolean', description: 'Create the Bot in an isolation space: it can chat only, and shell, files, the network, MCP tools and capabilities are refused. It keeps its own empty folder, its permission stays at the lowest level, and neither it nor update_bot can lift that. Only when the user asks for an isolated Bot.' },
     },
@@ -339,10 +346,10 @@ export function install(rt) {
         // takes its creator's: the DSH default may be a provider that has no key, and
         // then the new Bot fails on its first reply.
         const creator = callerBot(exec)
-        const served = new Set((await rt.catalog()).filter(entry => entry.needsKey !== true).map(entry => entry.ref))
+        const served = new Set((await rt.catalog()).filter(entry => entry.needsKey !== true && rt.isLocalAgentRef?.(entry.ref) !== true).map(entry => entry.ref))
         const fallback = [state.prefs.defaultBotModel, creator?.model].find(ref => ref && served.has(ref))
         const model = args.model || fallback
-        const bot = await rt.createBot({ ...args, isolation: isolating, avatar: avatar === undefined ? undefined : { image: avatar }, model, workDir, effort: args.effort, createdBy: creator?.id })
+        const bot = await rt.createBot({ ...args, isolation: isolating, avatar: avatar === undefined ? undefined : { image: avatar }, model, workDir, effort: args.effort, section: args.section, createdBy: creator?.id })
         if (isolating) return `Created ${bot.name} in an isolation space: it can chat, and shell, files and the network are refused. It is greeting the user now.`
         return `Created ${bot.name}${workDir ? `, working in ${workDir}` : ''}. It is greeting the user now.`
       } catch (error) {
@@ -361,9 +368,10 @@ export function install(rt) {
       instructions: { type: 'string', description: 'Replacement instructions' },
       color: { type: 'string', description: `One of ${[...COLORS, ...EXTRA_COLORS].join(', ')}` },
       avatar: { ...AVATAR_PARAM, description: `${AVATAR_PARAM.description} An empty string removes the photo and shows the Bot's character again.` },
-      model: { type: 'string', description: 'Move the Bot to another model, as provider/model or a model id' },
+      model: { type: 'string', description: 'Move the Bot to another model, as provider/model or a model id. It stays on what it runs on: only the user moves a Bot between DS Bot models and a local agent CLI, or between two CLIs, in its settings.' },
       effort: { type: 'string', description: 'Thinking level for the Bot\'s model, as list_bot_models shows; an empty string returns to the model\'s default' },
       work_dir: { ...WORK_DIR_PARAM, description: `${WORK_DIR_PARAM.description}; an empty string returns it to the team workspace` },
+      section: { ...SECTION_PARAM, description: `${SECTION_PARAM.description}; an empty string removes the Bot from its section (Main Bot only)` },
     },
     output,
     async execute(args, exec) {
@@ -388,7 +396,7 @@ export function install(rt) {
         }
       }
       try {
-        const { name: newName, role, instructions, color, model, effort } = args
+        const { name: newName, role, instructions, color, model, effort, section } = args
         let image
         if (args.avatar !== undefined) {
           const input = typeof args.avatar === 'string' ? args.avatar.trim() : args.avatar
@@ -401,7 +409,7 @@ export function install(rt) {
         // does: setting one keeps a custom character, and clearing removes only the image.
         // They are read here, after the waits above, so a change made meanwhile stays.
         const avatar = image === undefined ? undefined : { ...rt.botOf(bot.id)?.avatar, image }
-        const next = await rt.updateBot(bot.id, { name: newName, role, instructions, color, ...(avatar !== undefined ? { avatar } : {}), ...(model ? { model } : {}), ...(effort === undefined ? {} : { effort }), ...(moving ? { workDir: workDir ?? '' } : {}) }, self, exec.agent?.id)
+        const next = await rt.updateBot(bot.id, { name: newName, role, instructions, color, ...(avatar !== undefined ? { avatar } : {}), ...(model ? { model } : {}), ...(effort === undefined ? {} : { effort }), ...(section === undefined ? {} : { section }), ...(moving ? { workDir: workDir ?? '' } : {}) }, self, exec.agent?.id)
         if (!moving) return `Updated ${next.name}.`
         const folder = workDir ?? 'the team workspace'
         return bot.id === caller.id ? `Updated ${next.name}. From your next step on, you work in ${folder}.` : `Updated ${next.name}. It now works in ${folder}.`
@@ -467,7 +475,8 @@ export function install(rt) {
       return models.map((entry) => {
         const levels = entry.reasoning?.efforts?.map(effort => effort.id) ?? []
         const thinking = levels.length > 0 ? `, thinking: ${levels.join(', ')}${entry.reasoning.defaultEffort === undefined ? '' : ` (default: ${entry.reasoning.defaultEffort})`}` : ''
-        return `- ${entry.ref}${entry.name !== entry.id ? ` (${entry.name})` : ''}${entry.input?.includes('image') ? ', reads images' : ''}${entry.ref === fallback ? ', default' : ''}${thinking}`
+        const local = rt.isLocalAgentRef?.(entry.ref) === true ? `, runs on the local agent ${entry.providerName}` : ''
+        return `- ${entry.ref}${entry.name !== entry.id ? ` (${entry.name})` : ''}${local}${entry.input?.includes('image') ? ', reads images' : ''}${entry.ref === fallback ? ', default' : ''}${thinking}`
       }).join('\n')
     },
   }))
@@ -504,6 +513,7 @@ export function install(rt) {
       notice: { type: 'string', description: 'Shared instructions every member reads before speaking in this group; at most 2000 characters' },
       admin: { type: 'string', description: 'Member who leads the group; defaults to you' },
       mode: MODE_PARAM,
+      section: SECTION_PARAM,
     },
     output,
     async execute(args, exec) {
@@ -516,7 +526,7 @@ export function install(rt) {
       if (admin === undefined) return `No Bot named ${args.admin}. Team: ${teamNames()}`
       const members = [...new Set([self, ...bots.map(bot => bot.id), admin.id])]
       try {
-        const room = await rt.createRoom({ members, name: args.name, notice: args.notice, mode: args.mode, admin: admin.id, createdBy: self })
+        const room = await rt.createRoom({ members, name: args.name, notice: args.notice, mode: args.mode, admin: admin.id, section: args.section, createdBy: self })
         return `Created group "${room.name}" with ${room.members.map(id => rt.botOf(id).name).join(', ')}. ${admin.id === self ? 'You are' : `${admin.name} is`} its admin. It is in the user's sidebar; use post_to_group to start a discussion there.`
       } catch (error) {
         return `Could not create the group: ${error.message}`
@@ -536,6 +546,7 @@ export function install(rt) {
       admin: { type: 'string', description: 'Member to make the admin; "none" leaves the group without one (Main Bots only)' },
       mode: MODE_PARAM,
       work_dir: { ...WORK_DIR_PARAM, description: `${WORK_DIR_PARAM.description}. Every member works there in this group; an empty string lets each member work in its own folder again (Main Bots only)` },
+      section: { ...SECTION_PARAM, description: `${SECTION_PARAM.description}; an empty string removes the group from its section (Main Bots only)` },
     },
     output,
     async execute(args, exec) {
@@ -546,6 +557,7 @@ export function install(rt) {
       if (error) return error
       const moving = typeof args.work_dir === 'string'
       if (moving && !rt.isMain(self)) return `Only a Main Bot can set the folder of "${room.name}".`
+      if (args.section !== undefined && !rt.isMain(self)) return `Only a Main Bot can move "${room.name}" between sidebar sections.`
       const add = resolveBots(args.add_members)
       const remove = resolveBots(args.remove_members)
       const unknown = [...add.unknown, ...remove.unknown]
@@ -576,6 +588,7 @@ export function install(rt) {
           admin,
           add: add.bots.map(bot => bot.id),
           remove: remove.bots.map(bot => bot.id),
+          ...(args.section === undefined ? {} : { section: args.section }),
           ...(moving ? { workDir: workDir ?? '' } : {}),
         }, self)
         return changes.length === 0 ? `Nothing changed in "${next.name}".` : `Updated "${next.name}": ${changes.join('; ')}.`
@@ -702,13 +715,9 @@ export function install(rt) {
         .filter(option => option.label !== '')
         .slice(0, 6)
       if (options.length === 0) return 'Give at least one option.'
-      // A hidden Bot-to-Bot turn shows none of its calls, so its card goes to the
-      // composer dock, which takes questions without a call.
-      const turn = rt.live.get(id)?.turn
-      const hidden = turn !== undefined && (state.exchangeTurns[id] ?? []).includes(turn)
       state.questions[id] = {
         id: randomUUID(),
-        ...(exec.callId && !hidden ? { callId: exec.callId } : {}),
+        ...(exec.callId ? { callId: exec.callId } : {}),
         question: String(args.question ?? '').trim(),
         ...(args.detail ? { detail: String(args.detail).trim() } : {}),
         options,
@@ -717,6 +726,7 @@ export function install(rt) {
         askedAt: Date.now(),
       }
       await rt.save()
+      rt.cardShown?.(id, 'question', state.questions[id].question)
       exec.concludeTurn?.()
       return 'The card is on screen; the user\'s answer arrives as their next message.'
     },
@@ -742,18 +752,15 @@ export function install(rt) {
       if (checked.interactive && args.await_reply === false) return 'This view has controls to submit, so it waits for the user\'s answer; call show_view without await_reply: false.'
       const awaitReply = args.await_reply ?? checked.interactive
       if (!awaitReply) return 'The view is on screen.'
-      // A hidden Bot-to-Bot turn shows none of its calls, so its card goes to the
-      // composer dock, which takes a card without a call.
-      const turn = rt.live.get(id)?.turn
-      const hidden = turn !== undefined && (state.exchangeTurns[id] ?? []).includes(turn)
       state.views[id] = {
         id: randomUUID(),
-        ...(exec.callId && !hidden ? { callId: exec.callId } : {}),
+        ...(exec.callId ? { callId: exec.callId } : {}),
         title,
         view,
         askedAt: Date.now(),
       }
       await rt.save()
+      rt.cardShown?.(id, 'view', title)
       exec.concludeTurn?.()
       return 'The view is on screen; the user\'s answer arrives as their next message.'
     },
@@ -814,7 +821,7 @@ export function install(rt) {
     // can move onto or off a local route after its Agent exists. An isolation
     // space Bot likewise gains its own tools, and only it, in the same scope.
     const self = owns ? rt.botOf(rt.selfOf(id)) : undefined
-    const localBot = rt.isLocalAgentRef?.(self?.appliedModel ?? self?.model) === true
+    const localBot = rt.isLocalAgentRef?.(self?.model ?? self?.appliedModel) === true
     const isolatedBot = self?.isolation === true
     // A Session that left the team, a scope of the wrong kind, a fresh Agent
     // for one Session, or a Bot that changed between a local route and a model
@@ -823,7 +830,37 @@ export function install(rt) {
       unscope(id)
       held = undefined
     }
-    if (!wanted || held?.tools === true) return
+    if (!wanted) return
+    // A live Agent can be scoped while the modules that add tools are still installing:
+    // loading the plugin again walks the live Agents from the load the memory module
+    // starts, and the tools added after it (memory, secrets, connectors) would never
+    // join that scope. Register what it is missing, so the next request is whole.
+    if (held?.tools === true) {
+      for (const def of [...rt.teamTools, ...(localBot ? (rt.localAgentTools ?? []) : [])]) {
+        if (relayOnly && def.name !== 'group_relay') continue
+        if (held.added?.has(def.name) === true) continue
+        try {
+          const dispose = agent.ctx.tools.register(def)
+          if (typeof dispose === 'function') {
+            ;(held.toolLifts ??= new Map()).set(def.name, dispose)
+            held.disposers.push(dispose)
+          }
+          // Recorded only once the Agent took it: one that failed is tried again at
+          // the next assemble, so a reload cannot leave that tool out for good.
+          ;(held.added ??= new Set()).add(def.name)
+          held.unlisted.add(def.name)
+        } catch (error) {
+          // A name the replaced plugin's scope still holds reads as already
+          // registered. It is left out of `added`, so the next assemble tries again
+          // once that scope is released, and it is not reported as a new failure.
+          if (/already registered/i.test(String(error?.message ?? error))) continue
+          if (held.missed?.has(def.name) === true) continue
+          ;(held.missed ??= new Set()).add(def.name)
+          rt.warn('ds-bot: team tool %s not added to %s: %s', def.name, id, error)
+        }
+      }
+      return
+    }
     if (typeof agent.ctx?.tools?.register !== 'function') {
       if (!registerless.has(agent)) {
         registerless.add(agent)
@@ -857,6 +894,7 @@ export function install(rt) {
     held.local = localBot
     held.isolation = isolatedBot
     held.disposers.push(...disposers)
+    held.added = new Set(registered)
     scoped.set(id, held)
     // A scope made outside creation never reached a collected tool list; the
     // assemble adds the pending names to the step's list once, then clears them.
@@ -923,6 +961,7 @@ export function install(rt) {
       try {
         const dispose = held.agent.ctx.tools.register(def)
         if (typeof dispose === 'function') held.disposers.push(dispose)
+        ;(held.added ??= new Set()).add(def.name)
         held.unlisted.add(def.name)
       } catch { /* an agent that refuses it simply lacks the tool */ }
     }
@@ -934,6 +973,7 @@ export function install(rt) {
     for (const held of scoped.values()) {
       held.toolLifts?.get(name)?.()
       held.toolLifts?.delete(name)
+      held.added?.delete(name)
       held.unlisted.delete(name)
     }
   }

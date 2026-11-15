@@ -13,21 +13,19 @@ import { AcpEngine } from './acp.js'
 import { CodexEngine } from './codex.js'
 import { ClaudeEngine } from './claude.js'
 import { ENGINES, customRoute, isLocalAgentRoute, validateCustom } from './engines.js'
-import { cleanEnv, findExecutable, probeVersion, refreshSearchDirs } from './discover.js'
-import { attachRoutes } from './routes.js'
+import { cleanEnv, findExecutable, probeSignIn, probeVersion, refreshSearchDirs } from './discover.js'
 
 const SIGN_IN = {
   'devin-cli': 'devin auth login',
   'claude-code': 'claude',
   'codex-cli': 'codex login',
-  'opencode': 'opencode auth login',
   'cursor-cli': 'cursor-agent login',
   'gemini-cli': 'gemini',
-  'grok-cli': 'grok',
   'cline': 'cline auth',
   'qwen-code': 'qwen',
-  'goose': 'goose configure',
 }
+
+const SIGNED_IN_TTL_MS = 60_000
 
 const spawnEngine = (kind, route, spec) => (kind === 'acp' ? new AcpEngine(route, spec, { findExecutable })
   : kind === 'codex' ? new CodexEngine(route, spec, { findExecutable })
@@ -47,41 +45,40 @@ export function install(rt) {
   const customAgents = () => store().custom
   const customRouteId = () => store().custom.map(agent => customRoute(agent.id))
   const allRoutes = () => [...Object.keys(ENGINES), ...customRouteId()]
-  const scanning = () => store().scan !== false
 
   // Only CLIs found on this machine get a route; the scan result feeds the page.
   const found = new Map()
   async function scan() {
-    if (!scanning()) {
-      found.clear()
-      applyRoutes()
-      return [...found.values()]
-    }
     await refreshSearchDirs()
-    // The switch may have been turned off while the search ran.
-    if (!scanning()) {
-      found.clear()
-      applyRoutes()
-      return []
-    }
     for (const route of Object.keys(ENGINES)) {
       const spec = ENGINES[route]
       const path = findExecutable(spec.command)
       if (path === undefined) found.delete(route)
-      else found.set(route, { route, name: spec.name, path, version: undefined, signIn: SIGN_IN[route] })
+      else if (found.get(route)?.path !== path) found.set(route, { route, name: spec.name, path, version: undefined, signIn: SIGN_IN[spec.id] })
     }
     applyRoutes()
     return [...found.values()]
   }
   async function probeVersions() {
-    for (const entry of found.values()) {
-      if (entry.version !== undefined) continue
+    await Promise.all([...found.values()].map(async (entry) => {
+      if (entry.version !== undefined) return
       const spec = ENGINES[entry.route]
-      // The CLI may be a script that starts node through `env`: it needs the
-      // same PATH additions the scan used, not the dock's sparse one.
-      const result = await probeVersion(entry.path, spec.version ?? ['--version'], cleanEnv()).catch(() => undefined)
+      const result = await probeVersion(entry.path, spec.version ?? ['--version'], cleanEnv(spec.env ?? {})).catch(() => undefined)
       entry.version = result?.version
-    }
+    }))
+  }
+  // Asked only when the list of CLIs is about to show, never at start or for a menu.
+  async function probeSignIns() {
+    await Promise.all([...found.values()].map(async (entry) => {
+      if (entry.signedIn !== undefined && Date.now() - entry.signedInAt < SIGNED_IN_TTL_MS) return
+      entry.signedIn = await probeSignIn(entry.path, ENGINES[entry.route].signedIn)
+      entry.signedInAt = Date.now()
+    }))
+  }
+  // A signed-out CLI or a slow one never holds back the list for long: each check is bounded.
+  async function freshList() {
+    await Promise.all([probeVersions(), probeSignIns()])
+    return { available: supported(), detected: detected(), custom: customView() }
   }
 
   const adapter = new LocalAgentAdapter({
@@ -89,6 +86,7 @@ export function install(rt) {
     customAgents,
     findExecutable,
     spawnEngine,
+    usedModels: route => usedRefs().map(ref => splitRef(ref)).filter(used => used?.provider === route).map(used => used.model),
     record: sessionId => store().sessions[sessionId],
     saveRecord: (sessionId, record) => {
       store().sessions[sessionId] = record
@@ -115,17 +113,21 @@ export function install(rt) {
     },
   })
 
-  // Read on use: a newer DSH resolves an injected service on access and refuses one
-  // before the plugin's context is active, which would fail the whole team's start.
-  const llmService = () => { try { return ctx.llm } catch { return undefined } }
-  const supported = () => typeof llmService()?.registerAdapter === 'function'
-  const router = attachRoutes({ llm: llmService, adapter, log: message => ctx.logger?.warn?.(`ds-bot: ${message}`) })
+  let registration
+  const supported = () => typeof ctx.llm?.registerAdapter === 'function'
+  const usedRefs = () => [...new Set(Object.values(state.bots ?? {}).flatMap(bot => [bot.model, bot.appliedModel]).filter(Boolean))]
+  // A route a Bot runs on stays registered when its CLI goes away: the turn then fails
+  // with the repair card, and nothing moves the Bot to another run mode by itself.
+  const servedRoutes = () => [...new Set([...found.keys(), ...customRouteId(), ...usedRefs().map(ref => splitRef(ref)?.provider).filter(isLocalAgentRoute)])]
   function applyRoutes() {
     if (!supported()) return
-    // Off, no local-agent route is offered at all; the custom agents stay on
-    // the page but their routes are withdrawn with the detected ones.
-    const routes = scanning() ? [...found.keys(), ...customRouteId()] : []
-    router.apply(routes)
+    const routes = servedRoutes()
+    // The initial registration needs at least one provider; an empty replace
+    // is legal and keeps the adapter registered with zero routes.
+    if (registration === undefined) {
+      if (routes.length === 0) return
+      registration = ctx.llm.registerAdapter(routes, adapter)
+    } else registration.replace(routes)
   }
   // Custom agents hold a route whether or not their command resolves yet; a
   // missing one fails at prompt time with a typed error.
@@ -137,15 +139,23 @@ export function install(rt) {
   // setup would leave the adapter disposed from the moment it installs.
   ctx.effect(() => () => {
     void adapter.dispose()
-    router.dispose()
+    registration?.()
   }, 'ds-bot: local agents')
 
   // ---------------------------------------------------------------------------
   // Helpers the rest of the host asks.
 
   const isLocalAgentRef = ref => isLocalAgentRoute(splitRef(ref)?.provider ?? '')
+  // What a ref runs on: the local agent's route, or 'model' for DS Bot's own models.
+  // Two refs with the same answer share a conversation; two with different ones never do.
+  const engineOf = (ref) => {
+    if (!ref) return undefined
+    return isLocalAgentRef(ref) ? splitRef(ref).provider : 'model'
+  }
+  // The model the Bot asked for decides, not the one last applied, which lags behind it.
+  const engineOfBot = bot => engineOf(bot?.model ?? bot?.appliedModel)
   const localAgentOf = (bot) => {
-    const ref = bot?.appliedModel ?? bot?.model
+    const ref = bot?.model ?? bot?.appliedModel
     return ref !== undefined && isLocalAgentRef(ref) ? ref : undefined
   }
   const isLocalAgentSession = (sessionId) => {
@@ -189,33 +199,29 @@ export function install(rt) {
   // ---------------------------------------------------------------------------
   // The Settings page's endpoints.
 
-  const detected = () => [...found.values()].map(entry => ({ route: entry.route, name: entry.name, path: entry.path, version: entry.version ?? null, signIn: entry.signIn }))
+  const detected = () => [...found.values()].map(entry => ({ route: entry.route, name: entry.name, path: entry.path, version: entry.version ?? null, signIn: entry.signIn, signedIn: entry.signedIn ?? null }))
   const customView = () => store().custom.map(agent => ({ ...agent, route: customRoute(agent.id) }))
-  const view = () => ({ available: supported(), scanning: scanning(), detected: detected(), custom: customView() })
+
+  // One CLI's models: the first look starts that CLI, later ones read what it said.
+  const localAgentModels = route => (servedRoutes().includes(route) ? adapter.probeModels(route) : Promise.resolve([]))
 
   async function localAgentsEndpoint(endpoint, body) {
     switch (endpoint) {
       case 'local-agents': {
         await scan()
-        await probeVersions()
-        return view()
+        return freshList()
       }
       case 'local-agent-refresh': {
         adapter.dropModelCache()
+        for (const entry of found.values()) delete entry.signedIn
         await scan()
-        await probeVersions()
-        return view()
+        await rt.catalog?.({ fresh: true })
+        return freshList()
       }
-      case 'local-agent-scan': {
-        if (typeof body.enabled !== 'boolean') throw new Error('enabled must be true or false')
-        if (body.enabled) delete store().scan
-        else store().scan = false
-        found.clear()
-        adapter.dropModelCache()
-        await scan()
-        await probeVersions()
-        await rt.save()
-        return view()
+      case 'local-agent-models': {
+        const models = await localAgentModels(String(body.route ?? ''))
+        await rt.catalog?.({ fresh: true })
+        return models
       }
       case 'local-agent-add': {
         const clean = validateCustom(body)
@@ -252,8 +258,10 @@ export function install(rt) {
   }
 
   Object.assign(rt, {
-    isLocalAgentRoute, isLocalAgentRef, localAgentOf, isLocalAgentSession,
-    localAgentRoutes: allRoutes, localAgentsEndpoint,
+    isLocalAgentRoute, isLocalAgentRef, engineOf, engineOfBot, localAgentOf, isLocalAgentSession,
+    localAgentRoutes: allRoutes, localAgentsEndpoint, localAgentModels,
+    engineNameOf: ref => (isLocalAgentRef(ref) ? adapter.providerInfo(splitRef(ref).provider).name : `the model ${ref}`),
+    closeLocalAgentSession: (sessionId, reason) => adapter.closeSession(sessionId, reason),
     localAgentBadge: (ref) => {
       const provider = splitRef(ref)?.provider
       return provider !== undefined && isLocalAgentRoute(provider) ? provider : undefined

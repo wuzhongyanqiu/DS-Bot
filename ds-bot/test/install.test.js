@@ -37,10 +37,12 @@ test('apply registers listeners and effects in a fixed order', (t) => {
   assert.deepEqual(ctx.calls, [
     'effect ds-bot: diagnostics log',
     'effect ds-bot: state lock',
+    'effect ds-bot: ledger',
     'on llm/adapters-updated',
     'on credentials/reference-updated',
     'on credentials/record-updated',
     'on settings/document-updated',
+    'effect ds-bot: auxiliary llm retry',
     'on subagent/start',
     'on subagent/end',
     'on session/event',
@@ -48,6 +50,7 @@ test('apply registers listeners and effects in a fixed order', (t) => {
     'on subagent/end',
     'on tools/result',
     'on session/event',
+    'effect ds-bot: lost hand-offs',
     'on tools/execute',
     'effect ds-bot: identity section',
     'prompt bot-identity 640',
@@ -60,6 +63,7 @@ test('apply registers listeners and effects in a fixed order', (t) => {
     'on system-prompt/assemble',
     'on session/event',
     'effect ds-bot: chat index',
+    'effect ds-bot: group rounds',
     'effect ds-bot: group step lines',
     'on llm/stream',
     'on approval/request (prepend)',
@@ -72,8 +76,10 @@ test('apply registers listeners and effects in a fixed order', (t) => {
     'on agent/pre-step',
     'on agent/status',
     'effect ds-bot: memory review',
+    'effect ds-bot: memory tidy',
     'effect ds-bot: Bot compaction',
     'on agent/created',
+    'effect ds-bot: wake parts that wait for their run mode',
     'on agent/pre-step (prepend)',
     'on system-prompt/assemble (prepend)',
     'on agent/request-error (prepend)',
@@ -83,6 +89,7 @@ test('apply registers listeners and effects in a fixed order', (t) => {
     'on workspace/session-activity',
     'on agent/status',
     'on llm/stream',
+    'on session/event',
     'on llm/stream',
     'on agent/status',
     'on tools/execute',
@@ -109,6 +116,8 @@ test('apply registers listeners and effects in a fixed order', (t) => {
     'on llm/stream',
     'effect ds-bot: update check',
     'effect ds-bot: dsh update install',
+    'on session/event',
+    'effect ds-bot: mobile room signals',
     'on agent/status',
     'on session/event',
     'on agent/assistant-stream',
@@ -119,52 +128,12 @@ test('apply registers listeners and effects in a fixed order', (t) => {
     'effect ds-bot: im',
     'effect ds-bot: tts worker',
     'effect ds-bot: image generation',
+    'effect ds-bot: phone link',
     'effect ds-bot: api route',
     'route POST /api/bot',
     'effect ds-bot: load state',
     'effect ds-bot: local agents',
   ])
-})
-
-test('a group chat in front releases the focused Bot chat', async (t) => {
-  const { call, stop } = start({
-    version: 1,
-    mainBotIds: ['m1'],
-    revision: 1,
-    bots: { m1: { id: 'm1', name: 'Chief', role: 'Chief of Staff', instructions: '', createdAt: 1 } },
-    rooms: { 'room-1': { id: 'room-1', name: 'Group', members: ['m1'], admin: 'm1', mode: 'admin', createdAt: 2 } },
-    exchanges: [],
-    exchangeTurns: {},
-    questions: {},
-  })
-  t.after(stop)
-  const focused = () => rt.capabilityFocusedSession()
-  assert.equal((await call('visible-session', { sessionId: 'm1' })).value, true)
-  assert.equal(focused(), 'm1')
-  // The group's own Session is known but not a Bot chat: it releases the focus.
-  assert.equal((await call('visible-session', { sessionId: 'room-1' })).value, true)
-  assert.equal(focused(), undefined)
-  assert.deepEqual((await call('visible-session', { sessionId: 'not-a-session' })).error, { code: 'bot/not-found', message: 'Unknown session', details: {} })
-})
-
-test('an Agent Session in front releases the focused Bot chat too', async (t) => {
-  const { call, stop } = start({
-    version: 1,
-    mainBotIds: ['m1'],
-    revision: 1,
-    bots: { m1: { id: 'm1', name: 'Chief', role: 'Chief of Staff', instructions: '', createdAt: 1 } },
-    rooms: {},
-    agents: { a1: { id: 'a1', name: 'DSH Agent', sessions: ['agent-session'], createdAt: 2 } },
-    exchanges: [],
-    exchangeTurns: {},
-    questions: {},
-  })
-  t.after(stop)
-  const focused = () => rt.capabilityFocusedSession()
-  assert.equal((await call('visible-session', { sessionId: 'm1' })).value, true)
-  assert.equal(focused(), 'm1')
-  assert.equal((await call('visible-session', { sessionId: 'agent-session' })).value, true)
-  assert.equal(focused(), undefined)
 })
 
 test('the client channel answers from the saved state', async (t) => {
@@ -195,10 +164,6 @@ test('the client channel answers from the saved state', async (t) => {
   assert.deepEqual((await call('exchange', { a: 'b2', b: 'm1' })).value.map(entry => entry.id), ['x'])
   assert.deepEqual(await call('room-progress', { roomId: 'r' }), { ok: true, value: [] })
   assert.deepEqual(await call('send', { text: ' ' }), { ok: false, error: { code: 'bot/invalid', message: 'Nothing to send', details: {} } })
-  // Which Session is in front: a team Session is accepted, anything else is not.
-  assert.equal((await call('visible-session', { sessionId: 'm1' })).value, true)
-  assert.equal((await call('visible-session', { sessionId: null })).value, true)
-  assert.deepEqual((await call('visible-session', { sessionId: 'not-a-session' })).error, { code: 'bot/not-found', message: 'Unknown session', details: {} })
   assert.deepEqual(await call('nope'), { ok: false, error: { code: 'bot/not-found', message: 'Unknown endpoint nope', details: {} } })
   assert.deepEqual(await call('set-prefs', { accent: 'red' }), { ok: false, error: { code: 'bot/invalid', message: 'Accent must be a #rrggbb color', details: {} } })
   // The motion level is kept unless it is the default, and only the three levels pass.
@@ -231,12 +196,6 @@ test('the client channel answers from the saved state', async (t) => {
   assert.equal('enterToSend' in (await call('set-prefs', { enterToSend: true })).value, false)
   await call('set-prefs', { enterToSend: false })
   assert.equal('enterToSend' in (await call('set-prefs', { enterToSend: null })).value, false)
-  // Bot rows are off until turned on; only a boolean passes, and off removes the key.
-  assert.equal((await call('set-prefs', { showBots: true })).value.showBots, true)
-  assert.equal('showBots' in (await call('set-prefs', { showBots: false })).value, false)
-  assert.deepEqual((await call('set-prefs', { showBots: 'yes' })).error, { code: 'bot/invalid', message: 'Show Bot chats must be true or false', details: {} })
-  assert.equal((await call('set-prefs', { showBots: true })).value.showBots, true)
-  assert.equal('showBots' in (await call('set-prefs', { showBots: null })).value, false)
   // A refusal from the team code keeps its message for the user.
   assert.deepEqual((await call('delete-bot', { id: 'nobody' })).error, { code: 'bot/refused', message: 'Unknown Bot', details: {} })
   // Off the Desktop profile there are no Bot browsers.
@@ -317,7 +276,49 @@ test('a custom agent keeps the local agents adapter live after install', async (
   const { ctx, stop, rt } = start({ version: 1, localAgents: { custom: [{ id: 'a1', name: 'A', command: 'node', args: [] }], sessions: {} } })
   t.after(stop)
   await rt.load()
-  const entry = (ctx.adapters ?? []).find(candidate => candidate.routes.includes('acp-a1'))
+  const entry = (ctx.adapters ?? []).find(candidate => candidate.routes.includes('local-acp-a1'))
   assert.ok(entry, 'the custom route is registered')
   assert.equal(entry.adapter.disposed, false, 'the adapter survives install')
+})
+
+// Local-agent routes have their own prefix (#1059): a Bot on DSH's own OpenCode
+// provider stays there, and DS Bot never registers a name another provider has.
+test('a Bot on DSH\'s opencode provider is not taken for a local agent', async (t) => {
+  const bot = { id: 'b1', name: 'Zen', model: 'opencode/glm-5', appliedModel: 'opencode/glm-5' }
+  const { ctx, stop, rt } = start({ version: 1, bots: { b1: bot }, localAgents: { custom: [], sessions: {} } })
+  t.after(stop)
+  await rt.load()
+  assert.equal(rt.state.bots.b1.model, 'opencode/glm-5')
+  assert.equal(rt.isLocalAgentRef('opencode/glm-5'), false)
+  const routes = (ctx.adapters ?? []).flatMap(entry => entry.routes)
+  assert.ok(!routes.includes('opencode'), 'DS Bot does not register the name DSH\'s provider uses')
+})
+
+test('a Bot saved on an old local-agent route moves to the prefixed one', async (t) => {
+  const state = {
+    version: 1,
+    bots: {
+      b1: { id: 'b1', name: 'Codex', model: 'codex-cli/gpt-6.1-sol', appliedModel: 'codex-cli/gpt-6.1-sol' },
+      b2: { id: 'b2', name: 'OC', sessionId: 's-oc', model: 'opencode/grok-code' },
+      b3: { id: 'b3', name: 'Mine', model: 'acp-a1/default' },
+    },
+    localAgents: {
+      custom: [{ id: 'a1', name: 'A', command: 'node', args: [] }],
+      sessions: { b1: { route: 'codex-cli', cliSessionId: 't1' }, 's-oc': { route: 'opencode', cliSessionId: 'oc1' } },
+    },
+  }
+  const { ctx, stop, rt } = start(state)
+  t.after(stop)
+  await rt.load()
+  const bots = rt.state.bots
+  assert.equal(bots.b1.model, 'local-codex-cli/gpt-6.1-sol')
+  assert.equal(bots.b1.appliedModel, undefined, 'the Sessions are selected again on the new route')
+  // The opencode CLI served this Bot's Session, so its old ref meant the CLI.
+  assert.equal(bots.b2.model, 'local-opencode/grok-code')
+  assert.equal(bots.b3.model, 'local-acp-a1/default')
+  assert.equal(rt.state.localAgents.sessions.b1.route, 'local-codex-cli')
+  assert.equal(rt.state.localAgents.sessions['s-oc'].route, 'local-opencode')
+  const routes = (ctx.adapters ?? []).flatMap(entry => entry.routes)
+  for (const route of ['local-codex-cli', 'local-opencode', 'local-acp-a1']) assert.ok(routes.includes(route), route)
+  assert.ok(!routes.some(route => ['codex-cli', 'opencode', 'acp-a1'].includes(route)))
 })
