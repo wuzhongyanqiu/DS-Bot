@@ -55,13 +55,31 @@ export const ROOM_NAME_MAX = 60
 export const ROOM_NOTICE_MAX = 2000
 export const ROOM_MAX_MEMBERS = 12
 
+// DSH tools a Bot Session never gets: the blocking question tool (Bots ask through
+// ask_user instead), DSH's own goals (DS Bot has group goals), and the delegation tools
+// that start child agents the user cannot watch or stop.
+export const BLOCKING_QUESTION_TOOL = 'ask_user_question'
+export const GOAL_TOOLS = ['create_goal', 'update_goal', 'get_goal']
+export const DELEGATION_TOOLS = ['subagent', 'subagent_fork', 'subagent_codex', 'subagent_claude_code', 'list_subagent_models', 'send_message', 'interrupt_agent', 'list_agents', 'workflow', 'ralph', 'spawn_teammate', 'wait_agent', 'team_task_create', 'team_task_get', 'team_task_list', 'team_task_update']
+// restrict() refuses a whole list when one name is registered in the Agent's own
+// scope, so each group is masked on its own.
+export const HIDDEN_TOOL_GROUPS = [[BLOCKING_QUESTION_TOOL, ...GOAL_TOOLS], DELEGATION_TOOLS]
+export const HIDDEN_TOOLS = HIDDEN_TOOL_GROUPS.flat()
+// The guidance DSH writes into the prompt for the hidden tools. Agent Teams makes
+// every root Session a Team Lead and tells it to spawn teammates in `team:policy`;
+// its `team:identity` context is required, so DSH puts it back after any filter.
+export const HIDDEN_SECTIONS = new Set([...HIDDEN_TOOLS.map(name => `tool:${name}`), 'tool:goal', 'team:policy'])
+
 // An isolation space is a sandbox for what a Bot may touch, not a lock on what it is.
-// These are the only tools it is offered and allowed to call: chat, its own memory, and
+// These are the tools it is always offered and allowed to call: chat, its own memory,
 // changing its own profile (update_bot cannot raise permission, move the folder or add
-// capabilities, and those refusals live in updateBot). The guard in tools.js refuses
-// every other name — shell, files, network, MCP, browser, jobs — so a line of
-// instructions, a stale tool list, or a newer plugin cannot widen it.
-export const ISOLATION_TOOLS = ['ask_user', 'show_view', 'read_own_chat', 'remember', 'forget', 'recall', 'update_bot']
+// capabilities, and those refusals live in updateBot), asking for a key through the
+// secure card, running on an endpoint it set for itself, and drawing a picture on the
+// host's own image server. The user may add exact tool names to one Bot's
+// `isolationGrants`; those join this list, and only those. The guard in tools.js
+// refuses every other name — shell, files, the open network, MCP, browser, jobs — so a
+// line of instructions, a stale tool list, or a newer plugin cannot widen it.
+export const ISOLATION_TOOLS = ['list_bots', 'ask_user', 'show_view', 'read_own_chat', 'remember', 'forget', 'recall', 'update_bot', 'request_secret', 'set_model_endpoint', 'generate_image']
 export const ISOLATION_REFUSAL = 'This Bot is in an isolation space: it can chat, but commands, files, the network and every other tool are off. Answer in words instead of running or reading anything.'
 
 // A team's one DSH Agent: a plain dsh entry in the sidebar, not a Bot. Its Sessions
@@ -78,6 +96,7 @@ export const TEAM_TOOLS = [
   'read_group_chat', 'remember', 'forget', 'recall', 'read_browser',
   'list_capabilities', 'save_capability', 'delete_capability',
   'attach_capability', 'detach_capability', 'group_goal', 'list_connectors', 'request_connector',
+  'generate_image',
 ]
 // Consecutive automatic admin wakes with no goal progress before the goal waits
 // for the user instead of waking the admin again.

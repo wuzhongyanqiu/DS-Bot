@@ -4,8 +4,9 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, realpath } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { MAX_AVATAR_IMAGE, ROOM_MAX_MEMBERS, ROOM_MODES, ROOM_NAME_MAX, ROOM_NOTICE_MAX } from './constants.js'
+import { HIDDEN_TOOLS, MAX_AVATAR_IMAGE, ROOM_MAX_MEMBERS, ROOM_MODES, ROOM_NAME_MAX, ROOM_NOTICE_MAX } from './constants.js'
 import { currentColor, isColor, normalize, splitRef, unquote } from './text.js'
+import { routeIdFor } from './providers.js'
 import { nameProblem } from '../shared/mentions.js'
 
 const BROWSER_GRANT_KINDS = new Set(['post', 'upload', 'download', 'delete', '*'])
@@ -45,6 +46,21 @@ function cleanBrowserGrants(input) {
     grants.push({ site, kinds, ...(until !== undefined ? { until } : {}) })
   }
   return grants
+}
+
+// The exact tool names a user may add to one isolation space. Names only: a grant
+// never widens the space by prefix, and the tools every Bot hides stay refused.
+const TOOL_NAME = /^[A-Za-z_][A-Za-z0-9_.:-]{0,63}$/
+function cleanIsolationGrants(input) {
+  if (input === null) return null
+  if (!Array.isArray(input)) throw new Error('Tool grants must be a list of tool names')
+  const names = [...new Set(input.map(name => String(name ?? '').trim()).filter(Boolean))]
+  if (names.length > 32) throw new Error('At most 32 tools can be granted to one Bot')
+  for (const name of names) {
+    if (!TOOL_NAME.test(name)) throw new Error(`"${name}" is not a tool name`)
+    if (HIDDEN_TOOLS.includes(name)) throw new Error(`${name} stays off in every Bot, so it cannot be granted`)
+  }
+  return names.sort()
 }
 
 export function install(rt) {
@@ -226,7 +242,7 @@ export function install(rt) {
               : 'The user just created you. Greet the user in one short message, then ask in one short question what you should focus on.'
       const opener = `${kickoff}\n${OWN_RULES}`
       const space = isolation === true
-        ? '\nYou live in an isolation space: you can chat, but every tool that runs commands, reads or writes files, uses the network or acts on the computer is refused. Do not promise to run or read anything.'
+        ? '\nYou live in an isolation space: you can chat and use only the tools the user grants your space. Tools that run commands, read or write files, use the network or act on the computer stay refused unless granted; do not promise to run or read anything you were not granted.'
         : ''
       const text = !main && language ? `${opener}${space}\nWrite in ${language}.` : `${opener}${space}`
       const bot = state.bots[id]
@@ -368,13 +384,25 @@ export function install(rt) {
     if (bot.isolation === true && patch.permission !== undefined && String(patch.permission) !== bot.permission) {
       throw new Error(`${bot.name} is in an isolation space: its permission stays at the lowest level`)
     }
+    if (bot.isolation === true && actorId === id && (patch.effort !== undefined || (patch.model !== undefined && !String(patch.model).startsWith(`${routeIdFor(id)}/`)))) {
+      throw new Error(`${bot.name} is in an isolation space: it can update its own profile card and description, but cannot change general model or effort settings`)
+    }
     if (patch.browserGrants !== undefined && actorId !== undefined) {
       throw new Error(`Only the user can set what ${bot.name} may do in the browser`)
     }
     if (patch.private !== undefined && actorId !== undefined) {
       throw new Error(`Only the user can make ${bot.name} private or open`)
     }
+    // A grant opens exactly one named tool in one isolation space. The Bot cannot ask
+    // for it, and a field on an ordinary Bot means nothing.
+    if (patch.isolationGrants !== undefined && actorId !== undefined) {
+      throw new Error(`Only the user can choose the tools of ${bot.name}'s isolation space`)
+    }
+    if (patch.isolationGrants !== undefined && bot.isolation !== true) {
+      throw new Error(`${bot.name} is not in an isolation space, so it has no isolation tools to grant`)
+    }
     const browserGrants = patch.browserGrants === undefined ? undefined : cleanBrowserGrants(patch.browserGrants)
+    const isolationGrants = patch.isolationGrants === undefined ? undefined : cleanIsolationGrants(patch.isolationGrants)
     // Checked first, so a folder, model or level that does not pass leaves the rest
     // unchanged too.
     const moving = patch.workDir !== undefined
@@ -448,6 +476,12 @@ export function install(rt) {
       if (browserGrants === null) delete bot.browserGrants
       else bot.browserGrants = browserGrants
     }
+    let grantsChanged = false
+    if (isolationGrants !== undefined) {
+      if (isolationGrants === null || isolationGrants.length === 0) delete bot.isolationGrants
+      else bot.isolationGrants = isolationGrants
+      grantsChanged = true
+    }
     if (flag === true) bot.private = true
     else if (flag === false) delete bot.private
     const moved = moving && workDir !== bot.workDir
@@ -456,6 +490,11 @@ export function install(rt) {
       else bot.workDir = workDir
     }
     await rt.save()
+    // The mask holds the tools that were served before the grant; reapply it now so the
+    // new set is what the next assembly offers. A failure here must not fail the save.
+    if (grantsChanged) {
+      try { rt.reapplyToolMasks?.() } catch (error) { rt.warn('ds-bot: tool masks of %s were not updated: %s', bot.name, error) }
+    }
     // The system prompt reads the live profile every turn, but a Session with
     // several rounds behind it follows the old kickoff's pull until a message
     // lands; notify the Bot's chat so the next turn honors the new profile.

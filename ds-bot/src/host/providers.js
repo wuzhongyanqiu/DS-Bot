@@ -2,9 +2,16 @@
 // own. DSH keeps all of it: a provider route in the settings of the adapter that serves
 // it, the route's key in DSH's credential store under the reference the route names.
 // The providers to add are the ones DSH's directory of configurable providers offers.
+import { createHash } from 'node:crypto'
+import { normalizeName } from './secrets.js'
 
 const PI_AI = 'llm-pi-ai'
 const ROUTE_ID = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/
+// pi-ai's OpenAI-compatible client refuses to send a request without an
+// Authorization header, even to a server that asks for no key, so a keyless
+// route carries a placeholder for the header and nothing else.
+const KEYLESS_HEADERS = { Authorization: 'Bearer none' }
+const BOT_ROUTE = /^bot-[a-z0-9]+(?:-[a-z0-9]+)*-[0-9a-f]{8}$/
 // The wire protocols DSH's pi-ai adapter serves on a route it ships nothing about.
 export const PROTOCOLS = ['openai-completions', 'openai-responses', 'anthropic-messages']
 const MAX_MODELS = 500
@@ -39,6 +46,14 @@ const catalogProtocol = id => (RESPONSES_PROVIDERS.has(id) ? 'openai-responses' 
 // here and one added there read the same key.
 export const keyRefFor = provider => `${provider.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}_API_KEY`
 
+// The route an isolation space Bot's own endpoint lives on. The id is stable across a
+// restart and satisfies DSH's route grammar whatever the Bot id contains.
+export const routeIdFor = (botId) => {
+  const text = String(botId ?? '')
+  const slug = text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24).replace(/-+$/g, '') || 'space'
+  return `bot-${slug}-${createHash('sha256').update(text).digest('hex').slice(0, 8)}`
+}
+
 const invalid = message => Object.assign(new Error(message), { code: 'bot/invalid' })
 
 // What an HTTP header can carry, like DSH's own key check: a pasted `NAME=value` line
@@ -58,6 +73,13 @@ function checkEndpoint(value) {
   try { url = new URL(text) } catch { throw invalid('Enter the endpoint as an http or https address') }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') throw invalid('Enter the endpoint as an http or https address')
   return text
+}
+
+function checkModelId(value) {
+  const id = typeof value === 'string' ? value.trim() : ''
+  const control = [...id].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)
+  if (id === '' || id.length > 200 || control) throw invalid('Enter one model id the endpoint serves')
+  return id
 }
 
 function lookupKnownModel(known, rawId) {
@@ -162,6 +184,13 @@ export function install(rt) {
     for (const [id, profile] of Object.entries(userProviders)) {
       const nextCompat = compatForRoute(id, profile)
       if (nextCompat !== undefined) ops.push({ op: 'set', path: ['providers', id, 'compat'], value: nextCompat })
+      // Routes written before the placeholder was added are left without any
+      // Authorization header, and pi-ai refuses every request through them.
+      if (BOT_ROUTE.test(id) && typeof profile === 'object' && profile !== null
+          && refOf(profile) === undefined
+          && !Object.keys(profile.headers ?? {}).some(name => name.toLowerCase() === 'authorization')) {
+        ops.push({ op: 'set', path: ['providers', id, 'headers'], value: { ...profile.headers, ...KEYLESS_HEADERS } })
+      }
     }
     if (ops.length === 0) return
     await found.settings.mutate(PI_AI, ops, section.revision)
@@ -327,6 +356,91 @@ export function install(rt) {
     })
   }
 
+  // A Bot in an isolation space sets its own endpoint: one route of its own, keyed by
+  // the secret the user saved through request_secret. The route is global DSH settings,
+  // so it leaves with the Bot.
+  async function setBotModelEndpoint(bot, { baseURL, api = 'openai-completions', model, name, keySecret, clearKey = false } = {}) {
+    await repairing
+    if (bot?.isolation !== true) throw invalid('Only a Bot in an isolation space sets its own model endpoint')
+    if (!PROTOCOLS.includes(api)) throw invalid(`The protocol must be one of ${PROTOCOLS.join(', ')}`)
+    const endpoint = checkEndpoint(baseURL)
+    const url = new URL(endpoint)
+    if (url.username !== '' || url.password !== '') throw invalid('The endpoint cannot carry a user name or password; save the key with request_secret instead')
+    const modelId = checkModelId(model)
+    const routeId = routeIdFor(bot.id)
+    const { settings, credentials } = usable()
+    const map = sections(settings)
+    const entry = entryOf(routeId)
+    if (entry !== undefined && entry.settingsNs !== PI_AI) throw invalid(`${routeId} belongs to another provider`)
+    if (entry !== undefined && profileOf(entry, map, 'base') !== undefined) throw invalid(`${routeId} comes with this setup and cannot be changed`)
+    const current = entry === undefined ? undefined : profileOf(entry, map)
+    const currentRef = refOf(current)
+    const currentInfo = currentRef === undefined ? undefined : await credentials.describe(currentRef).catch(() => undefined)
+    const ref = keyRefFor(routeId)
+    let apiKeyEnv
+    let keyValue
+    if (typeof keySecret === 'string' && keySecret.trim() !== '') {
+      if (typeof rt.loadSecrets !== 'function' || typeof rt.secretValue !== 'function' || typeof rt.canUseSecret !== 'function') throw invalid('This DSH cannot read a saved secret here')
+      const secretName = normalizeName(keySecret)
+      await rt.loadSecrets()
+      if (!rt.canUseSecret(secretName, bot.id)) throw invalid(`${secretName} is not saved for ${bot.name}; ask for it with request_secret first`)
+      keyValue = checkKey(rt.secretValue(secretName))
+      apiKeyEnv = ref
+    } else if (clearKey !== true && current !== undefined && current.baseURL === endpoint && currentInfo?.configured === true) {
+      apiKeyEnv = currentRef
+    }
+    // A key belongs to the address it was given for: changing the endpoint without a new
+    // key drops it rather than sending it to a host it was never meant to reach.
+    const dropping = apiKeyEnv === undefined && currentRef !== undefined && currentInfo?.configured === true
+    if (dropping && currentInfo.writable === false) throw invalid(`The API key for ${routeId} is set outside DS Bot; clear it in Settings → Models before changing the endpoint`)
+    const profile = {
+      ...customProfile({ api, baseURL: endpoint, name, models: [{ id: modelId }] }, undefined),
+      ...(apiKeyEnv === undefined ? { headers: { ...KEYLESS_HEADERS } } : { apiKeyEnv }),
+    }
+    await settings.mutate(PI_AI, [{ op: 'set', path: entry?.settingsPath ?? ['providers', routeId], value: profile }], map.get(PI_AI)?.revision)
+    if (keyValue !== undefined) await credentials.set(ref, keyValue)
+    else if (dropping) await credentials.unset(currentRef)
+    rt.dropCatalog()
+    const target = `${routeId}/${modelId}`
+    return { ref: target, routeId, baseURL: endpoint, served: await waitForServed(target) }
+  }
+
+  // DSH registers a changed settings section in its own time, so the route is not
+  // promised to the catalog the moment it is written.
+  async function waitForServed(ref, ms = 8000) {
+    const deadline = Date.now() + ms
+    for (;;) {
+      const entries = await rt.catalog({ fresh: true }).catch(() => [])
+      if (entries.some(entry => entry.ref === ref)) return true
+      if (Date.now() >= deadline) return false
+      await new Promise(resolve => setTimeout(resolve, 250))
+    }
+  }
+
+  // A deleted Bot leaves no route or key behind. A route another Bot still names stays.
+  async function removeBotModelEndpoint(bot) {
+    const found = seams()
+    if (found === undefined || typeof bot?.id !== 'string') return
+    const routeId = routeIdFor(bot.id)
+    const map = sections(found.settings)
+    const entry = entryOf(routeId)
+    if (entry === undefined || entry.settingsNs !== PI_AI) return
+    if (profileOf(entry, map, 'user') === undefined || profileOf(entry, map, 'base') !== undefined) return
+    const inUse = Object.values(rt.state?.bots ?? {}).some(other => other.id !== bot.id
+      && [other.model, other.appliedModel].some(ref => typeof ref === 'string' && ref.startsWith(`${routeId}/`)))
+    if (inUse) return
+    const ref = refOf(profileOf(entry, map))
+    await found.settings.mutate(PI_AI, [{ op: 'unset', path: entry.settingsPath }], map.get(PI_AI)?.revision)
+    if (ref === keyRefFor(routeId)) {
+      const shared = [...keyRefs()].some(([other, otherRef]) => other !== routeId && otherRef === ref)
+      if (!shared) {
+        const info = await found.credentials.describe(ref).catch(() => undefined)
+        if (info?.configured === true && info.writable !== false) await found.credentials.unset(ref)
+      }
+    }
+    rt.dropCatalog()
+  }
+
   // Only a route the user added goes; its key goes with it when it is the one this page
   // derives and no other provider names it.
   async function removeProvider(provider) {
@@ -347,5 +461,5 @@ export function install(rt) {
     return providersView()
   }
 
-  Object.assign(rt, { keyRefs, missingKeys, providersView, setProviderKey, clearProviderKey, addProvider, discoverModels, removeProvider })
+  Object.assign(rt, { keyRefs, missingKeys, providersView, setProviderKey, clearProviderKey, addProvider, discoverModels, removeProvider, setBotModelEndpoint, removeBotModelEndpoint })
 }

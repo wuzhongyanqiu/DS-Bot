@@ -8,6 +8,8 @@ function start() {
   const bots = new Map([
     ['main', { name: 'Chief' }],
     ['worker', { name: 'Dev', instructions: 'Check files.' }],
+    ['iso', { name: 'Chat Only', instructions: 'Only talk. Use short sentences.', isolation: true }],
+    ['blank-iso', { name: 'Blank', isolation: true }],
   ])
   install({
     ctx,
@@ -35,6 +37,18 @@ test('Bots get a scoped progress rule without changing the private/group prompt 
     }
   }
   assert.equal(prompt('group-worker'), prompt('worker'))
+})
+
+test('an isolation space gets its instructions alone, with no identity line or rules', (t) => {
+  const { ctx, prompt } = start()
+  t.after(() => ctx.dispose())
+  assert.equal(prompt('iso'), 'Only talk. Use short sentences.')
+  assert.doesNotMatch(prompt('iso'), /Your identity|How your Bot team works|You are the Main Bot/)
+  // A blank persona leaves the section empty: nothing is put in its place.
+  assert.equal(prompt('blank-iso'), '')
+  // Other Bots keep the identity line and the team rules.
+  assert.match(prompt('worker'), /# Your identity\nYou are Dev/)
+  assert.match(prompt('worker'), /## How your Bot team works/)
 })
 
 test('the group relay and non-Bot sessions do not get progress instructions', (t) => {

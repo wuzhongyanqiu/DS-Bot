@@ -45,6 +45,9 @@ export function install(rt) {
     const self = rt.selfOf(id)
     const bot = rt.botOf(self)
     if (bot !== undefined) {
+      // An isolation space answers to the user's words alone: no identity line and no
+      // team rules are put in front of its instructions.
+      if (bot.isolation === true) return bot.instructions ?? ''
       return [
         '# Your identity',
         `You are ${bot.name}, a Bot on the user's team in DS Bot.${bot.role ? ` Your role: ${bot.role}.` : ''}`,

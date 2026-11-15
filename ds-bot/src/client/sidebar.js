@@ -18,7 +18,6 @@ import { frameLayout, dragColumn, RAIL_WIDTH, FALLBACK_SIDEBAR_WIDTH, userSideba
 import { chatRoom, dshCollapsed } from './frame-watch.js'
 import { botSessionOf } from './focus-session.js'
 import { JobsBadge, JobsButton } from './jobs.js'
-import { WhaleButton } from './whale.js'
 
 // -------------------------------------------------------------------------
 // Sidebar
@@ -641,11 +640,10 @@ export function TeamSidebar(props) {
   const foot = wideContent
     ? h('div', { className: 'bt-leftcol-foot' },
         h(ShellFooterActions, { useFooterActions: props.useFooterActions, wide: true }),
-        h(WhaleButton, { actions }), h(AccountLauncher, { seat: false, actions }))
+        h(AccountLauncher, { seat: false, actions }))
     : h('div', { className: 'bt-leftcol-foot bt-leftcol-foot-rail' },
         h('button', { type: 'button', className: 'bt-round', 'aria-label': t('New…'), title: t('New…'), onClick: () => actions.openNewChat('new') }, h(PlusIcon)),
         h(ShellFooterActions, { useFooterActions: props.useFooterActions, wide: false }),
-        h(WhaleButton, { actions }),
         h(AccountLauncher, { seat: false, actions }))
   const content = h('div', { className: wideContent ? 'bt-side' : 'bt-side bt-rail', onKeyDown: typeToSearch },
     top,

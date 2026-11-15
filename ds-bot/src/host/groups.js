@@ -563,8 +563,9 @@ export function install(rt) {
     return waiters.length > 0
   }
   rt.yieldRoomTurn = (sessionId) => { for (const waiter of waitersOf(sessionId)) waiter.approval() }
-  // The team's own tools are quick; any other tool is the start of work.
-  const QUICK_TOOLS = new Set(TEAM_TOOLS)
+  // The team's own tools are quick; any other tool is the start of work. Drawing a
+  // picture takes minutes, so it counts as work like any foreign tool.
+  const QUICK_TOOLS = new Set(TEAM_TOOLS.filter(name => name !== 'generate_image'))
   rt.workRoomTurn = (sessionId, tool) => {
     if (QUICK_TOOLS.has(tool)) return
     const owner = rt.groupOwners.get(sessionId)

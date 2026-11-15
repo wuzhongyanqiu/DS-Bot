@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { createRuntime } from '../index.js'
 import { ISOLATION_REFUSAL, ISOLATION_TOOLS } from '../src/host/constants.js'
+import { keyRefFor, routeIdFor } from '../src/host/providers.js'
 import { fakeContext } from './fake-ctx.js'
 
 const team = () => ({
@@ -37,14 +38,53 @@ const team = () => ({
   revision: 1,
 })
 
-const SERVED = ['bash', 'read', 'write', 'web_fetch', 'run_code', 'mcp__thing__do', ...ISOLATION_TOOLS, 'ask_user_question']
+const SERVED = ['bash', 'read', 'write', 'web_fetch', 'run_code', 'mcp__thing__do', 'read_browser', ...ISOLATION_TOOLS, 'ask_user_question']
 
-async function setup({ state = team() } = {}) {
+async function setup({ state = team(), secrets = {}, keys = { DEEPSEEK_API_KEY: 'sk-test' } } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'ds-bot-isolation-'))
   const isolationRoot = join(home, 'isolated')
   writeFileSync(join(home, 'state.json'), JSON.stringify(state))
+  if (Object.keys(secrets).length > 0) {
+    writeFileSync(join(home, 'secrets.json'), JSON.stringify({
+      version: 1,
+      secrets: Object.entries(secrets).map(([name, secret]) => ({ name, value: secret.value, scope: secret.scope, purpose: '', requestedBy: null, createdAt: 1, updatedAt: 1 })),
+    }))
+  }
   const sets = []
   const restriction = []
+  // Names currently withheld from an Agent: a mask adds them, its disposer lifts them.
+  const activeDenied = new Set()
+  // DSH settings and credentials, as far as providers.js reads them: one llm-deepseek
+  // section that comes with the setup, and routes that come and go with llm-pi-ai.
+  const store = { ...keys }
+  const settingsWrites = []
+  let revision = 0
+  let pi = { user: {}, base: {} }
+  const piValue = () => ({ providers: { ...pi.base.providers, ...pi.user.providers } })
+  const routes = () => Object.keys(piValue().providers)
+  const settings = {
+    describe: () => [
+      { ns: 'llm-deepseek', revision: 0, value: { apiKeyEnv: 'DEEPSEEK_API_KEY' }, user: {}, base: { apiKeyEnv: 'DEEPSEEK_API_KEY' } },
+      { ns: 'llm-pi-ai', revision, value: piValue(), user: structuredClone(pi.user), base: structuredClone(pi.base) },
+    ],
+    mutate: async (ns, ops, expected) => {
+      if (expected !== revision) throw new Error(`settings namespace "${ns}" changed since it was read`)
+      const next = structuredClone(pi.user)
+      for (const op of ops) {
+        const parent = op.path.slice(0, -1).reduce((value, key) => (value[key] ??= {}), next)
+        if (op.op === 'set') parent[op.path.at(-1)] = op.value
+        else delete parent[op.path.at(-1)]
+      }
+      settingsWrites.push([ns, ops])
+      pi = { ...pi, user: next }
+      revision += 1
+    },
+  }
+  const credentials = {
+    describe: async ref => ({ configured: ref in store, writable: true }),
+    set: async (ref, value) => { settingsWrites.push(['set', ref]); store[ref] = value },
+    unset: async (ref) => { settingsWrites.push(['unset', ref]); delete store[ref] },
+  }
   const permissionPresets = {
     catalog: () => ({
       options: [
@@ -57,20 +97,32 @@ async function setup({ state = team() } = {}) {
     resolve: name => ({ value: name }),
     set: (session, name) => { sets.push({ sessionId: session.id, name }) },
   }
-  const ctx = fakeContext({ services: { permissionPresets } })
+  const ctx = fakeContext({ services: { permissionPresets, settings, credentials } })
   const agents = new Map()
+  // The tools each resolved Agent's own scope serves, by tool name.
+  const toolScopes = new Map()
+  const agentListeners = []
+  const contextShadows = []
   let sessions = 0
   const agentFor = async (id) => {
     if (agents.has(id)) return agents.get(id)
+    const scope = new Map()
+    toolScopes.set(id, scope)
     const agent = {
       id,
       session: { id },
       ctx: {
         tools: {
-          register: () => () => {},
-          restrict: (filter) => { restriction.push({ sessionId: id, ...filter }); return () => {} },
+          register: (tool) => { scope.set(tool.name, tool); return () => {} },
+          restrict: (filter) => {
+            restriction.push({ sessionId: id, ...filter })
+            const keys = filter.deny.map(name => `${id}\0${name}`)
+            for (const key of keys) activeDenied.add(key)
+            return () => { for (const key of keys) activeDenied.delete(key) }
+          },
         },
-        on: () => () => {},
+        on: (event, listener) => { agentListeners.push({ sessionId: id, event, listener }); return () => {} },
+        systemPrompt: { context: entry => { contextShadows.push({ sessionId: id, ...entry }); return () => {} } },
         effect: execute => execute(),
       },
     }
@@ -82,9 +134,14 @@ async function setup({ state = team() } = {}) {
   ctx.tools.schemas = () => SERVED.map(name => ({ name }))
   Object.assign(ctx, {
     llm: {
-      listProviders: () => [{ id: 'deepseek', name: 'DeepSeek' }],
-      listModels: async () => [{ id: 'deepseek-v4-flash' }],
+      listProviders: () => [{ id: 'deepseek', name: 'DeepSeek' }, ...routes().map(id => ({ id, name: piValue().providers[id].displayName ?? id }))],
+      listModels: async (id) => (id === 'deepseek' ? [{ id: 'deepseek-v4-flash' }] : piValue().providers[id]?.models ?? []),
       resolveModelInfo: async () => ({}),
+      listConfigurableProviders: () => [
+        { provider: 'deepseek', displayName: 'DeepSeek', settingsNs: 'llm-deepseek', settingsPath: [] },
+        ...routes().map(id => ({ provider: id, displayName: piValue().providers[id].displayName ?? id, settingsNs: 'llm-pi-ai', settingsPath: ['providers', id], declared: true })),
+      ],
+      discoverModels: async () => [],
     },
     workspaceRegistry: {
       get: () => undefined,
@@ -109,7 +166,16 @@ async function setup({ state = team() } = {}) {
     await ctx.dispose()
     rmSync(home, { recursive: true, force: true, maxRetries: 5 })
   }
-  return { ctx, rt, guard, sets, restriction, isolationRoot, stop }
+  return { ctx, rt, guard, sets, restriction, activeDenied, toolScopes, store, settingsWrites, agentListeners, contextShadows, isolationRoot, stop }
+}
+
+// The Bot's own system-prompt/assemble listener: the one that drops a hidden tool.
+async function assemblyFilterFor(agentListeners, sessionId) {
+  for (const entry of agentListeners.filter(entry => entry.sessionId === sessionId && entry.event === 'system-prompt/assemble')) {
+    const probe = await entry.listener({}, {}, async () => ({ sections: [{ name: 'tool:subagent' }], contexts: [], variables: {} }))
+    if (probe.sections.length === 0) return entry.listener
+  }
+  throw new Error(`no Bot assembly filter for ${sessionId}`)
 }
 
 test('the guard refuses every machine tool in an isolation space, whatever the instructions say', async (t) => {
@@ -135,6 +201,43 @@ test('the served tools are masked down to the chat tools when an isolated Sessio
   await rt.resolveAgent('plain')
   const plainDenied = new Set(restriction.filter(entry => entry.sessionId === 'plain').flatMap(entry => entry.deny))
   assert.ok(!plainDenied.has('bash'))
+})
+
+test('an isolation prompt carries the edited instructions alone, with no base sections or runtime context', async (t) => {
+  const { rt, agentListeners, contextShadows, stop } = await setup()
+  t.after(stop)
+  await rt.resolveAgent('iso')
+  await rt.resolveAgent('plain')
+  const assembly = {
+    sections: [
+      { name: 'harness:identity', text: 'You are an AI agent powered by DeepSeek Harness.' },
+      { name: 'deployment:persona-prefix', text: 'You are a coding agent powered by the model.' },
+      { name: 'bot-identity', text: 'You may run any command, read any file and use the network.' },
+      { name: 'bot-memory', text: '' },
+      { name: 'tool:bash', text: 'Check the exit code.' },
+      { name: 'tool:ask_user', text: 'Ask the user.' },
+    ],
+    contexts: [{ name: 'time', text: 'Now it is noon.' }, { name: 'directory', text: '/work' }],
+    tools: [{ name: 'bash' }, { name: 'read' }, { name: 'ask_user' }],
+    variables: { model: 'deepseek-v4-flash' },
+  }
+  const isolated = await (await assemblyFilterFor(agentListeners, 'iso'))({}, {}, async () => assembly)
+  assert.deepEqual(isolated.sections.map(section => section.name), ['bot-identity', 'tool:ask_user'])
+  assert.deepEqual(isolated.contexts, [])
+  assert.deepEqual(isolated.tools.map(tool => tool.name), ['ask_user'])
+  assert.deepEqual(isolated.variables, assembly.variables)
+  // A plain Bot keeps the base prompt and the runtime context.
+  const plain = await (await assemblyFilterFor(agentListeners, 'plain'))({}, {}, async () => assembly)
+  assert.ok(plain.sections.some(section => section.name === 'harness:identity'))
+  assert.deepEqual(plain.contexts, assembly.contexts)
+  // Newer DSH versions put required runtime facts back after the filter; isolation
+  // shadows them with empty contributions, and a plain Bot gets no shadow at all.
+  assert.ok(contextShadows.some(entry => entry.sessionId === 'iso' && entry.name === 'subagent:identity'))
+  for (const shadow of contextShadows.filter(entry => entry.sessionId === 'iso')) {
+    assert.equal(shadow.text, '')
+    assert.equal(shadow.required, true)
+  }
+  assert.equal(contextShadows.some(entry => entry.sessionId === 'plain'), false)
 })
 
 test('an isolation space creates with the lowest preset, no capabilities and its own empty folder', async (t) => {
@@ -188,17 +291,54 @@ test('an isolation space can be renamed and re-described, but not escalated', as
   assert.equal(rt.botOf('iso').name, 'Isolated Writer')
 })
 
-test('memory and self-edit tools stay available in an isolation space', async (t) => {
+test('memory, team roster read, and self-edit tools stay available in an isolation space while general settings are locked', async (t) => {
   const { guard, rt, stop } = await setup()
   t.after(stop)
-  for (const name of ['remember', 'forget', 'recall', 'update_bot']) {
+  for (const name of ['list_bots', 'remember', 'forget', 'recall', 'update_bot']) {
     assert.ok(ISOLATION_TOOLS.includes(name), `${name} is allowed`)
     assert.equal(guard(name, 'iso'), undefined, `${name} must not be refused`)
   }
-  // update_bot is refused for the folder only, before any approval card is raised.
   const tool = rt.teamTools.find(def => def.name === 'update_bot')
-  const reply = await tool.execute({ work_dir: tmpdir() }, { agent: { id: 'iso' } })
-  assert.match(reply, /own empty folder/)
+  const folderReply = await tool.execute({ work_dir: tmpdir() }, { agent: { id: 'iso' } })
+  assert.match(folderReply, /own empty folder/)
+  const modelReply = await tool.execute({ model: 'deepseek/deepseek-v4-flash' }, { agent: { id: 'iso' } })
+  assert.match(modelReply, /cannot change general model or effort settings/)
+  const effortReply = await tool.execute({ effort: 'high' }, { agent: { id: 'iso' } })
+  assert.match(effortReply, /cannot change general model or effort settings/)
+  const avatarPathReply = await tool.execute({ avatar: '/etc/passwd' }, { agent: { id: 'iso' } })
+  assert.match(avatarPathReply, /cannot read local file paths/)
+  // Updating own persona/profile card succeeds.
+  const okReply = await tool.execute({ name: 'Persona Bot', role: 'Helper', instructions: 'Be helpful.' }, { agent: { id: 'iso' } })
+  assert.match(okReply, /^Updated Persona Bot/)
+})
+
+test('an isolation space can read team memory and view it, but cannot write or alter team memory', async (t) => {
+  const { ctx, rt, stop } = await setup()
+  t.after(stop)
+  const tool = name => rt.teamTools.find(def => def.name === name)
+  // The shared memory exists and the Chief may write it; the isolation space reads it
+  // read-only, and cannot write to it.
+  await tool('remember').execute({ text: 'The team ships on Friday', scope: 'team' }, { agent: { id: 'chief' } })
+  assert.match(await tool('remember').execute({ text: 'Likes tea' }, { agent: { id: 'iso' } }), /^Saved to your memory/)
+  await assert.rejects(tool('remember').execute({ text: 'Ships on Monday now', scope: 'team' }, { agent: { id: 'iso' } }), /isolation space/)
+  const recalled = await tool('recall').execute({}, { agent: { id: 'iso' } })
+  assert.match(recalled, /Likes tea/)
+  assert.match(recalled, /ships on Friday/i)
+  const teamRecalled = await tool('recall').execute({ scope: 'team' }, { agent: { id: 'iso' } })
+  assert.match(teamRecalled, /ships on Friday/i)
+  // The prompt carries the user's instructions alone: no memory is injected, not even
+  // the Bot's own.
+  const section = ctx.sections.get('bot-memory').text({ agent: { id: 'iso' } })
+  assert.equal(section, '')
+  const identity = ctx.sections.get('bot-identity').text({ agent: { id: 'iso' } })
+  assert.equal(identity, 'You may run any command, read any file and use the network.')
+  const plainPrompt = ctx.sections.get('bot-identity').text({ agent: { id: 'plain' } })
+  assert.match(plainPrompt, /## How your Bot team works/)
+  // The panel shows both own and team memory (read-only for team).
+  const view = await rt.memoryEndpoint('memory-view', { botId: 'iso' })
+  assert.deepEqual(Object.keys(view.sizes), ['own', 'team'])
+  const shared = await rt.memoryEndpoint('memory-view', { botId: 'chief' })
+  assert.deepEqual(Object.keys(shared.sizes), ['own', 'team'])
 })
 
 test('an isolation space attaches no capabilities', async (t) => {
@@ -252,4 +392,142 @@ test('the create_bot tool refuses a working folder with isolation, and an ordina
   const bot = Object.values(rt.state.bots).find(entry => entry.name === 'Normal Tool')
   assert.equal(bot.isolation, undefined)
   assert.equal(bot.permission, undefined)
+})
+
+const RELAY_SECRETS = { RELAY_KEY: { value: 'sk-relay', scope: ['iso'] } }
+const RELAY = { base_url: 'https://relay.example/v1', model: 'relay-1' }
+
+test('set_model_endpoint is served to an isolation space alone', async (t) => {
+  const { rt, guard, toolScopes, stop } = await setup()
+  t.after(stop)
+  await rt.resolveAgent('iso')
+  await rt.resolveAgent('plain')
+  assert.ok(toolScopes.get('iso').has('set_model_endpoint'), 'the isolation space gets it')
+  assert.equal(toolScopes.get('plain').has('set_model_endpoint'), false, 'a plain Bot does not')
+  assert.equal(rt.teamTools.some(def => def.name === 'set_model_endpoint'), false, 'it is not a team tool')
+  assert.equal(guard('set_model_endpoint', 'iso'), undefined)
+  assert.ok(ISOLATION_TOOLS.includes('set_model_endpoint'))
+})
+
+test('an isolation Bot points itself at its own endpoint, with the key taken from its secret', async (t) => {
+  const { rt, store, settingsWrites, toolScopes, stop } = await setup({ secrets: RELAY_SECRETS })
+  t.after(stop)
+  const agent = await rt.resolveAgent('iso')
+  const tool = toolScopes.get('iso').get('set_model_endpoint')
+  const reply = await tool.execute({ ...RELAY, key_secret: 'RELAY_KEY', name: 'Relay' }, { agent })
+  assert.ok(!/Could not|Only Bots/.test(reply), reply)
+  const routeId = routeIdFor('iso')
+  assert.equal(rt.botOf('iso').model, `${routeId}/relay-1`)
+  assert.equal(store[keyRefFor(routeId)], 'sk-relay')
+  assert.match(reply, new RegExp(`${routeId}/relay-1`))
+  assert.equal(reply.includes('sk-relay'), false, 'the key never reaches the transcript')
+  const profile = settingsWrites.find(([ns, ops]) => ns === 'llm-pi-ai' && ops[0]?.op === 'set')[1][0].value
+  assert.equal(profile.baseURL, 'https://relay.example/v1')
+  assert.equal(profile.apiKeyEnv, keyRefFor(routeId))
+  assert.deepEqual(profile.models, [{ id: 'relay-1' }])
+})
+
+test('a Bot outside an isolation space is refused even if it reaches the tool', async (t) => {
+  const { rt, stop } = await setup({ secrets: RELAY_SECRETS })
+  t.after(stop)
+  const def = rt.isolationTools.find(tool => tool.name === 'set_model_endpoint')
+  const reply = await def.execute({ ...RELAY, key_secret: 'RELAY_KEY' }, { agent: { id: 'plain' } })
+  assert.match(reply, /isolation space/)
+  assert.equal(rt.botOf('plain').model, undefined)
+})
+
+test('deleting an isolation Bot takes its endpoint and key with it', async (t) => {
+  const { rt, store, settingsWrites, toolScopes, stop } = await setup({ secrets: RELAY_SECRETS })
+  t.after(stop)
+  const agent = await rt.resolveAgent('iso')
+  const routeId = routeIdFor('iso')
+  const ref = keyRefFor(routeId)
+  await toolScopes.get('iso').get('set_model_endpoint').execute({ ...RELAY, key_secret: 'RELAY_KEY' }, { agent })
+  settingsWrites.length = 0
+  await rt.deleteBot('iso')
+  assert.equal(rt.botOf('iso'), undefined)
+  assert.deepEqual(settingsWrites.find(([ns, ops]) => ns === 'llm-pi-ai' && ops[0]?.op === 'unset')[1], [{ op: 'unset', path: ['providers', routeId] }])
+  assert.deepEqual(settingsWrites.filter(([kind]) => kind === 'unset'), [['unset', ref]])
+  assert.equal(ref in store, false)
+})
+
+test('the user grants one exact tool to an isolation space, and only it opens', async (t) => {
+  const { rt, guard, activeDenied, stop } = await setup()
+  t.after(stop)
+  await rt.resolveAgent('iso')
+  assert.ok(activeDenied.has('iso\0bash'))
+  assert.ok(activeDenied.has('iso\0read_browser'), 'even the browser tool is masked before a grant')
+  const bot = await rt.updateBot('iso', { isolationGrants: ['read_browser'] })
+  assert.deepEqual(bot.isolationGrants, ['read_browser'])
+  assert.equal(guard('read_browser', 'iso'), undefined)
+  assert.equal(guard('bash', 'iso'), ISOLATION_REFUSAL)
+  assert.equal(activeDenied.has('iso\0read_browser'), false, 'the grant lifts its mask')
+  assert.equal(activeDenied.has('iso\0bash'), true, 'every other tool stays masked')
+  // A second name joins, and a duplicate is stored once.
+  await rt.updateBot('iso', { isolationGrants: ['web_fetch', 'read_browser', 'read_browser'] })
+  assert.deepEqual(rt.botOf('iso').isolationGrants, ['read_browser', 'web_fetch'])
+  assert.equal(guard('web_fetch', 'iso'), undefined)
+  assert.equal(guard('run_code', 'iso'), ISOLATION_REFUSAL)
+})
+
+test('a granted tool keeps its guidance section in the isolation prompt', async (t) => {
+  const { rt, agentListeners, stop } = await setup()
+  t.after(stop)
+  await rt.resolveAgent('iso')
+  await rt.updateBot('iso', { isolationGrants: ['read_browser'] })
+  const assembly = {
+    sections: [
+      { name: 'harness:identity', text: 'You are an AI agent powered by DeepSeek Harness.' },
+      { name: 'bot-identity', text: 'Read pages for the user.' },
+      { name: 'tool:read_browser', text: 'Read the page.' },
+      { name: 'tool:bash', text: 'Check the exit code.' },
+      { name: 'tool:ask_user', text: 'Ask the user.' },
+    ],
+    contexts: [{ name: 'time', text: 'Now it is noon.' }],
+    tools: [{ name: 'read_browser' }, { name: 'bash' }, { name: 'ask_user' }],
+    variables: {},
+  }
+  const isolated = await (await assemblyFilterFor(agentListeners, 'iso'))({}, {}, async () => assembly)
+  assert.deepEqual(isolated.sections.map(section => section.name), ['bot-identity', 'tool:read_browser', 'tool:ask_user'])
+  assert.deepEqual(isolated.tools.map(tool => tool.name), ['read_browser', 'ask_user'])
+  assert.deepEqual(isolated.contexts, [])
+})
+
+test('only the user grants isolation tools, and only on an isolation Bot', async (t) => {
+  const { rt, stop } = await setup()
+  t.after(stop)
+  await assert.rejects(rt.updateBot('iso', { isolationGrants: ['read_browser'] }, 'iso'), /Only the user/)
+  await assert.rejects(rt.updateBot('plain', { isolationGrants: ['read_browser'] }), /isolation space/)
+  await assert.rejects(rt.updateBot('iso', { isolationGrants: 'read_browser' }), /list of tool names/)
+  await assert.rejects(rt.updateBot('iso', { isolationGrants: ['has space'] }), /not a tool name/)
+  await assert.rejects(rt.updateBot('iso', { isolationGrants: ['a'.repeat(65)] }), /not a tool name/)
+  await assert.rejects(rt.updateBot('iso', { isolationGrants: Array.from({ length: 33 }, (_, index) => `tool_${index}`) }), /At most 32/)
+  await assert.rejects(rt.updateBot('iso', { isolationGrants: ['subagent'] }), /cannot be granted/)
+  assert.equal(rt.botOf('iso').isolationGrants, undefined)
+  assert.equal(rt.botOf('plain').isolationGrants, undefined)
+})
+
+test('clearing a grant masks the tool again', async (t) => {
+  const { rt, activeDenied, stop } = await setup()
+  t.after(stop)
+  await rt.resolveAgent('iso')
+  await rt.updateBot('iso', { isolationGrants: ['read_browser'] })
+  assert.equal(activeDenied.has('iso\0read_browser'), false)
+  await rt.updateBot('iso', { isolationGrants: null })
+  assert.equal(Object.hasOwn(rt.botOf('iso'), 'isolationGrants'), false)
+  assert.equal(activeDenied.has('iso\0read_browser'), true)
+  // An empty list means the same as clearing.
+  await rt.updateBot('iso', { isolationGrants: ['read_browser'] })
+  await rt.updateBot('iso', { isolationGrants: [] })
+  assert.equal(Object.hasOwn(rt.botOf('iso'), 'isolationGrants'), false)
+  assert.equal(activeDenied.has('iso\0read_browser'), true)
+})
+
+test('a copy of an isolation Bot starts without the original’s grants', async (t) => {
+  const { rt, stop } = await setup()
+  t.after(stop)
+  await rt.updateBot('iso', { isolationGrants: ['read_browser'] })
+  const copy = await rt.duplicateBot('iso')
+  assert.equal(copy.isolation, true)
+  assert.equal(copy.isolationGrants, undefined)
 })

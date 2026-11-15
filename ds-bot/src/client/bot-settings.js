@@ -18,15 +18,15 @@ const capitalize = word => word[0].toUpperCase() + word.slice(1)
 
 // Settings save on blur or Enter, with no Save button; Escape puts the
 // saved value back. A required field never saves empty.
-export function InlineText({ label, value, placeholder, required = false, maxLength, multiline = false, onSave }) {
+export function InlineText({ label, value, placeholder, required = false, maxLength, multiline = false, onSave, onFinish }) {
   const [draft, setDraft] = useState(null)
   const reverting = useRef(false)
   const commit = () => {
     const next = draft?.trim()
     setDraft(null)
-    if (reverting.current) { reverting.current = false; return }
-    if (next === undefined || next === (value ?? '') || (required && next === '')) return
-    void onSave(next)
+    if (reverting.current) { reverting.current = false; onFinish?.(); return }
+    if (next !== undefined && next !== (value ?? '') && !(required && next === '')) void onSave(next)
+    onFinish?.()
   }
   return h(multiline ? 'textarea' : 'input', {
     className: multiline ? 'bt-bs-input bt-bs-area' : 'bt-bs-input', value: draft ?? value ?? '', placeholder, maxLength, required, 'aria-label': label, spellCheck: false,
@@ -173,6 +173,37 @@ function MemoryCard({ bot, actions }) {
       h('span', { className: 'bt-mem-row-go' }, t('Manage'), h(ChevronRightIcon))))
 }
 
+// The exact tool names the user adds to one isolation space. The Bot keeps its chat
+// tools always; a grant opens one named tool and nothing beside it.
+function IsolationToolsCard({ bot, base, save }) {
+  const grants = bot.isolationGrants ?? []
+  const add = name => {
+    const next = [...new Set([...grants, name])].sort()
+    return save({ isolationGrants: next })
+  }
+  const remove = name => {
+    const next = grants.filter(entry => entry !== name)
+    return save({ isolationGrants: next.length > 0 ? next : null })
+  }
+  return h(Card, { title: t('Isolation tools') },
+    h(Row, {
+      label: t('Extra tools'),
+      hint: t('This Bot can always use its chat tools. Add the exact name of another tool, such as read_browser. Only you can grant these; the Bot cannot grant itself anything.'),
+      stack: true,
+    },
+    h('div', { className: 'bt-grants' },
+      grants.length === 0
+        ? h('span', { className: 'bt-set-hint' }, t('No extra tools granted.'))
+        : grants.map(name => h('span', { className: 'bt-grant', key: name },
+          h('span', { className: 'bt-grant-name' }, name),
+          h('button', { type: 'button', className: 'bt-grant-x', 'aria-label': t('Remove {name}', { name }), onClick: () => remove(name) }, '×'))),
+      h(InlineText, { label: t('Tool name'), value: '', placeholder: t('Tool name'), maxLength: 64, onSave: add }))),
+    h('div', { className: 'bt-set-row bt-bs-row' },
+      h('span', { className: 'bt-set-copy' },
+        h('span', { className: 'bt-set-hint' }, t('Always available: {tools}', { tools: base.join(', ') })),
+        h('span', { className: 'bt-set-hint' }, t('Tools a capability provides are not served in an isolation space, so granting one has no effect.')))))
+}
+
 // A Bot's settings as grouped cards: who it is (avatar, name, label), what it runs on
 // (model), what it does (instructions), its memory and tasks, its Main Bot role, its
 // sidebar place, and copies.
@@ -220,6 +251,7 @@ export function BotSettingsForm({ bot, roster, actions, run }) {
           h('span', { className: 'bt-bs-label' }, t('Folder')),
           bot.isolation === true ? h('span', { className: 'bt-set-hint' }, t('Isolation space: the folder stays at its own empty folder.')) : null),
         h(FolderMenu, { value: bot.workDir, actions, run, disabled: bot.isolation === true, onPick: workDir => save({ workDir }) }))),
+    bot.isolation === true ? h(IsolationToolsCard, { bot, base: roster.isolationTools ?? [], save }) : null,
     h(Card, { title: t('Privacy') },
       h(SwitchRow, {
         label: t('Private'),
@@ -295,5 +327,10 @@ label.bt-bs-row{cursor:text}
 .bt-switch:active:not(:disabled) .bt-switch-knob{width:21px}
 .bt-switch[aria-checked=true]:active:not(:disabled) .bt-switch-knob{transform:translateX(11px)}
 .bt-avedit :is(.bt-shapes,.bt-colors,.bt-dropzone){animation:bt-veil-in .18s ease-out}
+.bt-grants{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.bt-grant{display:inline-flex;align-items:center;gap:4px;padding:2px 4px 2px 10px;border-radius:999px;background:var(--bt-hover);font-size:12px;line-height:18px;font-family:var(--bt-mono,ui-monospace,SFMono-Regular,Menlo,monospace)}
+.bt-grant-x{width:18px;height:18px;padding:0;border:0;border-radius:999px;background:none;color:var(--bt-ink-2);font:inherit;font-size:14px;line-height:18px;cursor:pointer}
+.bt-grant-x:hover{background:var(--bt-active);color:var(--bt-ink)}
+.bt-grants .bt-bs-input{flex:0 1 160px;text-align:left}
 @media (prefers-reduced-motion:reduce){.bt-switch,.bt-switch-knob{transition:none}.bt-avedit :is(.bt-shapes,.bt-colors,.bt-dropzone){animation:none}}
 `

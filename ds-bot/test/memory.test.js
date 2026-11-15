@@ -1297,6 +1297,43 @@ test('when a turn ends, the memory review keeps what the user said, through the 
   assert.equal((await call('state', {})).value.memoryNews.b2.text, 'The user writes Rust')
 })
 
+test('an isolation space\'s review reads and keeps its own memory only', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'ds-bot-memory-'))
+  const state = {
+    ...TEAM,
+    bots: { ...TEAM.bots, iso: { id: 'iso', sessionId: 'iso', name: 'Chat Only', role: '', model: 'deepseek/v4', instructions: '', isolation: true, permission: 'read-only', capabilities: [], createdAt: 5 } },
+  }
+  writeFileSync(join(home, 'state.json'), JSON.stringify(state))
+  const replies = [JSON.stringify({ changes: [
+    { op: 'add', text: 'The user likes tea' },
+    { op: 'add', text: 'Everyone ships on Monday', team: true },
+  ] })]
+  const { ctx, call, read, home: dir, requests, stop } = start({ home, replies, history: { iso: ownChat }, config: { memoryReviewDelayMs: 0 } })
+  t.after(() => stop())
+  await call('state', {})
+  ctx.emit('agent/status', { agent: { id: 'iso' }, status: 'idle' })
+  await reviewed(call)
+  assert.equal(requests.length, 1)
+  // The request holds no team section, no team size, and no team change form.
+  assert.doesNotMatch(requests[0].system, /"team": true|Team entries are read only/)
+  assert.match(requests[0].system, /isolation space and has no team memory/)
+  assert.equal(requests[0].messages[0].content[0].text, [
+    'The Bot: Chat Only.',
+    '',
+    'Its memory now (own: this Bot\'s):',
+    '(none yet)',
+    '',
+    'New in its own chat with the user, oldest first:',
+    'User: Please remember this',
+    'Chat Only: Saved.',
+    '',
+    'Write every new or changed entry in English.',
+  ].join('\n'))
+  // A team change stays the Bot's own, and the shared memory is never written or read.
+  assert.deepEqual(parseMemory(read('bots', 'iso', 'MEMORY.md')).entries.map(entry => entry.text), ['The user likes tea', 'Everyone ships on Monday'])
+  assert.equal(existsSync(join(dir, 'memory', 'team', 'MEMORY.md')), false)
+})
+
 test('a group\'s review keeps what is said there in the group memory, read once for all its members', async (t) => {
   const replies = [JSON.stringify({ changes: [{ op: 'add', text: 'The user wants everything under one page', team: true }] })]
   const { ctx, call, read, home, requests, stop } = start({ replies, config: { memoryReviewDelayMs: 0 } })

@@ -5,14 +5,32 @@ import { BotMark, RoomAvatar } from './mark.js'
 import { speechApi, useDictation } from './composer.js'
 import { Shimmer } from './cells.js'
 import { useEscape, usePaneLeft } from './overlay-hooks.js'
+import { call } from './api.js'
 import { t } from './i18n.js'
 import { openCapture, preparationStep, speechCatalog, transcribeWave, turnDetector } from './speech.js'
 
 // Voice chat: listen, send what the user said, read the Bot's answer aloud, listen
 // again. With DSH's Voice Input plugin on, its recognizer hears the user: one
 // recording ends after a pause and is transcribed whole. Otherwise the browser's
-// own speech recognition does. The browser's speech synthesis reads the answer.
+// own speech recognition does. The Bot host's local Qwen3-TTS voice reads the
+// answer; when it is unavailable the browser's speech synthesis takes over.
 const plainSpeech = text => stripHeader(text).replace(/```[\s\S]*?```/g, ' ').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/[*_`#>|~-]+/g, ' ').replace(/\s+/g, ' ').trim()
+// Long replies are rendered in pieces, with the next piece requested while the
+// current one plays, so the first sound does not wait for the whole answer.
+const SPEECH_CHUNK = 400
+const speechChunks = (text) => {
+  const chunks = []
+  let rest = text
+  while (rest.length > SPEECH_CHUNK) {
+    const head = rest.slice(0, SPEECH_CHUNK)
+    const cut = Math.max(...['。', '！', '？', '；', '!', '?', ';', '，', ',', ' '].map(mark => head.lastIndexOf(mark))) + 1
+    const at = cut > 0 ? cut : SPEECH_CHUNK
+    chunks.push(rest.slice(0, at).trim())
+    rest = rest.slice(at).trim()
+  }
+  if (rest) chunks.push(rest)
+  return chunks
+}
 const VOICE_LABELS = {
   listening: 'Listening', thinking: 'Thinking', speaking: 'Speaking', paused: 'Paused',
   setup: 'Voice input needs its speech model', preparing: 'Preparing voice input…',
@@ -102,8 +120,39 @@ export function VoiceMode({ sessionId, roster, actions, useSessions, useSessionS
   reply.current = lastReply
   // Bumped on pause and close, so a transcript that arrives later is dropped.
   const turn = useRef(0)
+  const playback = useRef(null)
+  // Stops the audio element and settles the play promise waiting on it.
+  const stopAudio = () => {
+    const current = playback.current
+    playback.current = null
+    if (!current) return
+    current.element.onended = null
+    current.element.onerror = null
+    current.element.pause()
+    current.element.src = ''
+    current.fail(Object.assign(new Error('speech stopped'), { name: 'AbortError' }))
+  }
+  // Resolves when the clip ends; rejects on failure or when stopAudio interrupts.
+  const playAudio = (base64, mime) => new Promise((resolve, reject) => {
+    const bytes = Uint8Array.from(atob(base64), char => char.charCodeAt(0))
+    const url = URL.createObjectURL(new Blob([bytes], { type: mime || 'audio/wav' }))
+    const element = new Audio(url)
+    let settled = false
+    const finish = (error) => {
+      if (settled) return
+      settled = true
+      if (playback.current?.element === element) playback.current = null
+      URL.revokeObjectURL(url)
+      if (error) reject(error)
+      else resolve()
+    }
+    playback.current = { element, fail: finish }
+    element.onended = () => finish()
+    element.onerror = () => finish(new Error('speech playback failed'))
+    element.play().catch(finish)
+  })
   const paneLeft = usePaneLeft()
-  const close = () => { turn.current += 1; window.speechSynthesis?.cancel(); actions.closeVoice() }
+  const close = () => { turn.current += 1; stopAudio(); window.speechSynthesis?.cancel(); actions.closeVoice() }
   useEscape(close)
   const submit = (text) => {
     setHeard(text)
@@ -205,19 +254,41 @@ export function VoiceMode({ sessionId, roster, actions, useSessions, useSessionS
     const count = lastReply.slice(0, lastReply.indexOf('|'))
     const turn = Number(lastReply.slice(lastReply.indexOf('|') + 1))
     if (count === waiting.current) return undefined
+    const browserSpeak = (spoken, own) => {
+      if (!window.speechSynthesis) { if (turn.current === own) setPhase('listening'); return }
+      const utterance = new SpeechSynthesisUtterance(spoken)
+      utterance.lang = /[\u3400-\u9fff]/.test(spoken) ? 'zh-CN' : 'en-US'
+      utterance.onend = () => setPhase(current => (current === 'speaking' && turn.current === own ? 'listening' : current))
+      utterance.onerror = utterance.onend
+      window.speechSynthesis.cancel()
+      window.speechSynthesis.speak(utterance)
+    }
     const speak = (text) => {
       waiting.current = null
       const spoken = plainSpeech(text)
       setSaid(spoken)
       setHeard('')
-      if (!window.speechSynthesis || !spoken) { setPhase('listening'); return }
-      const utterance = new SpeechSynthesisUtterance(spoken)
-      utterance.lang = /[\u3400-\u9fff]/.test(spoken) ? 'zh-CN' : 'en-US'
-      utterance.onend = () => setPhase(current => (current === 'speaking' ? 'listening' : current))
-      utterance.onerror = utterance.onend
+      if (!spoken) { setPhase('listening'); return }
+      const own = turn.current
       setPhase('speaking')
-      window.speechSynthesis.cancel()
-      window.speechSynthesis.speak(utterance)
+      const chunks = speechChunks(spoken)
+      // The next chunk renders on the host while the current one plays.
+      let next = call('tts', { text: chunks[0] })
+      void (async () => {
+        try {
+          for (let index = 0; index < chunks.length; index += 1) {
+            const rendered = await next
+            if (turn.current !== own) return
+            if (index + 1 < chunks.length) next = call('tts', { text: chunks[index + 1] })
+            await playAudio(rendered.audio, rendered.mime)
+            if (turn.current !== own) return
+          }
+          setPhase(current => (current === 'speaking' ? 'listening' : current))
+        } catch (error) {
+          if (turn.current !== own || error?.name === 'AbortError') return
+          browserSpeak(spoken, own)
+        }
+      })()
     }
     // The outline commits at turn/end but only holds a bounded preview; the
     // closing Assistant text can trail it, so the answer is read through the
@@ -230,7 +301,7 @@ export function VoiceMode({ sessionId, roster, actions, useSessions, useSessionS
         speak(text)
       })
   }, [phase, running, lastReply])
-  useEffect(() => () => window.speechSynthesis?.cancel(), [])
+  useEffect(() => () => { stopAudio(); window.speechSynthesis?.cancel() }, [])
   const micLevel = useMicLevel(!speech && phase === 'listening' && dictation.listening)
   const level = speech ? serviceLevel : micLevel
   const markState = phase === 'thinking' || phase === 'transcribing' ? 'thinking' : phase === 'speaking' ? 'sending' : 'idle'
@@ -238,6 +309,7 @@ export function VoiceMode({ sessionId, roster, actions, useSessions, useSessionS
   const togglePause = () => {
     if (phase === 'paused') { setPhase('listening'); return }
     turn.current += 1
+    stopAudio()
     window.speechSynthesis?.cancel()
     setPhase('paused')
   }

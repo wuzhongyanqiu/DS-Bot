@@ -343,16 +343,16 @@ const groupNote = review => [
 
 const SUMMARY_SYSTEM = 'You write the memory summary that a user reads in the memory panel of DS Bot, an app where a team of AI Bots works for the user. You only restate saved memory entries; you never add to them.'
 
-const summaryRequest = ({ name, own, team, language }) => [
-  `Here is everything ${name} remembers: its own memory, then the team memory that every Bot shares. Each line is one entry; [[name]] is a topic.`,
+const summaryRequest = ({ name, own, team, language, isolation = false }) => [
+  isolation
+    ? `Here is everything ${name} remembers: its own memory. Each line is one entry; [[name]] is a topic.`
+    : `Here is everything ${name} remembers: its own memory, then the team memory that every Bot shares. Each line is one entry; [[name]] is a topic.`,
   '',
   `## ${name}'s memory`,
   ...(own.length > 0 ? own : ['(nothing)']),
+  ...(isolation ? [] : ['', '## Team memory', ...(team.length > 0 ? team : ['(nothing)'])]),
   '',
-  '## Team memory',
-  ...(team.length > 0 ? team : ['(nothing)']),
-  '',
-  `Write the summary in ${language}, speaking to the user as "you" about what ${name} knows. Use two to five sections. Each section is a line starting with "## " and a short heading, then one short paragraph of plain sentences: no lists, no bold, no tables. Start with an overview of one sentence that says what kinds of things are saved, and leave the facts to the sections after it: never say the same fact twice. Group related entries; facts from the team memory go in their own section that says the whole team shares them. Write only what the entries say: no guesses, no advice, no sources or dates, nothing before the first heading or after the last paragraph.`,
+  `Write the summary in ${language}, speaking to the user as "you" about what ${name} knows. Use two to five sections. Each section is a line starting with "## " and a short heading, then one short paragraph of plain sentences: no lists, no bold, no tables. Start with an overview of one sentence that says what kinds of things are saved, and leave the facts to the sections after it: never say the same fact twice. Group related entries${isolation ? '' : '; facts from the team memory go in their own section that says the whole team shares them'}. Write only what the entries say: no guesses, no advice, no sources or dates, nothing before the first heading or after the last paragraph.`,
 ].join('\n')
 
 const groupSummaryRequest = ({ name, lines, language }) => [
@@ -364,14 +364,14 @@ const groupSummaryRequest = ({ name, lines, language }) => [
   `Write the summary in ${language}, speaking to the user as "you" about what the group chat "${name}" knows. Use two to five sections. Each section is a line starting with "## " and a short heading, then one short paragraph of plain sentences: no lists, no bold, no tables. Start with an overview of one sentence that says what kinds of things are saved, and leave the facts to the sections after it: never say the same fact twice. Group related entries. Write only what the entries say: no guesses, no advice, no sources or dates, nothing before the first heading or after the last paragraph.`,
 ].join('\n')
 
-const askSystem = group => [
+const askSystem = (group, isolation = false) => [
   group
     ? 'You keep the memory of one group chat in DS Bot, an app where a team of AI Bots works for the user; its members share this memory in that group. The user is talking to you in the memory panel. You see every saved entry, numbered. Answer the user from the entries only, or change them as the user asks.'
     : 'You keep the memory of one Bot in DS Bot, an app where a team of AI Bots works for the user. The user is talking to you in the memory panel. You see every saved entry, numbered. Answer the user from the entries only, or change them as the user asks.',
   'Reply with one JSON object and nothing else: {"reply": "…", "changes": […]}',
   '- reply: one to three short sentences to the user. Say what you changed, or answer the question; when the entries do not say, say so. The user does not see the entry numbers, so never mention them.',
   '- changes: empty unless the user asks to add, correct, or remove something. Each change is one of',
-  group ? '  {"op": "add", "text": "…"}  a new entry' : '  {"op": "add", "text": "…", "team": false}  a new entry; team true only when the user wants every Bot to know it',
+  group || isolation ? '  {"op": "add", "text": "…"}  a new entry' : '  {"op": "add", "text": "…", "team": false}  a new entry; team true only when the user wants every Bot to know it',
   '  {"op": "edit", "entry": 3, "text": "…"}  replaces entry 3',
   '  {"op": "remove", "entry": 3}  removes entry 3',
   `- An entry is one short, self-contained fact of at most ${MEMORY_LIMITS.entry} characters that says whom it is about: "The user writes code in Vim", not "Writes code in Vim". Never save keys or passwords.`,
@@ -379,7 +379,7 @@ const askSystem = group => [
 
 // A group's review keeps what the work there needs, its project's own rules included,
 // which a Bot's review leaves out: only the members read it, and only there.
-const reviewSystem = ({ teamWrites = false, group = false } = {}) => [
+const reviewSystem = ({ teamWrites = false, group = false, isolation = false } = {}) => [
   group
     ? 'You keep the long-term memory of one group chat in DS Bot, an app where a team of AI Bots works for the user. The members read it in their later conversations in this group, which will not have these messages; no Bot reads it anywhere else. After each turn you read the new messages and decide what the group should still know. Most turns hold nothing worth keeping.'
     : 'You keep the long-term memory of one Bot in DS Bot, an app where a team of AI Bots works for the user. After each turn of a conversation you read the new messages and decide what the Bot should still know in its later conversations, which will not have these messages. Most turns hold nothing worth keeping.',
@@ -408,12 +408,12 @@ const reviewSystem = ({ teamWrites = false, group = false } = {}) => [
   `Change an entry with edit when the user says it changed or is no longer true, and remove one that the messages show was wrong or was only for one task${group ? ', or a goal or plan the messages show is reached or over' : ''}. Never add an entry that contradicts another.`,
   'Each change is one of',
   '  {"op": "add", "text": "…"}',
-  ...(teamWrites ? ['  {"op": "add", "text": "…", "team": true}  for what every Bot on the team needs, such as how the user wants all work delivered'] : []),
+  ...(teamWrites && !isolation ? ['  {"op": "add", "text": "…", "team": true}  for what every Bot on the team needs, such as how the user wants all work delivered'] : []),
   '  {"op": "add", "text": "…", "topic": "travel"}  for a detail only some conversations need, or when MEMORY.md is nearly full; a short topic name, in the user\'s language',
   '  {"op": "edit", "entry": 3, "text": "…"}  replaces entry 3',
   '  {"op": "remove", "entry": 3}',
   `An entry is one short fact of at most ${MEMORY_LIMITS.entry} characters, in the language the user writes in, that says whom it is about ("The user likes a plain style, mostly black, white, and grey", not "Plain style"). A name, a city, and a preference are three entries.`,
-  ...(teamWrites ? [] : [group ? 'Team entries are read only here: keep what this group needs as an entry of the group.' : 'Team entries are read only for you: keep what the whole team needs as an entry of this Bot.']),
+  ...(isolation ? ['This Bot is in an isolation space and has no team memory: keep every entry as an entry of this Bot.'] : teamWrites ? [] : [group ? 'Team entries are read only here: keep what this group needs as an entry of the group.' : 'Team entries are read only for you: keep what the whole team needs as an entry of this Bot.']),
 ].join('\n')
 
 // The language the user writes in: Chinese when Han characters outnumber Latin
@@ -427,11 +427,11 @@ export function writtenIn(texts, fallback) {
 }
 
 // `who` says whose memory it is, and `tag` marks its entries: own or group.
-const reviewRequest = ({ who, tag = 'own', numbered, left = 0, sizes, where, earlier, fresh, more, language }) => [
+const reviewRequest = ({ who, tag = 'own', numbered, left = 0, sizes, where, earlier, fresh, more, language, isolation = false }) => [
   who,
   '',
   ...(sizes ? [`MEMORY.md has ${sizes.home} of ${MEMORY_LIMITS.main} characters (${tag}) and ${sizes.team} of ${MEMORY_LIMITS.main} (team).`, ''] : []),
-  tag === 'group' ? 'Its memory now (group: shared by the members of this group; team: shared by every Bot):' : 'Its memory now (own: this Bot\'s; team: shared by every Bot):',
+  isolation ? 'Its memory now (own: this Bot\'s):' : tag === 'group' ? 'Its memory now (group: shared by the members of this group; team: shared by every Bot):' : 'Its memory now (own: this Bot\'s; team: shared by every Bot):',
   ...(numbered.length > 0 ? numbered.map((item, index) => `[${index + 1}] (${item.scope}${item.file.topic ? ` · ${item.file.topic}` : ''}) ${item.text}`) : ['(none yet)']),
   ...(left > 0 ? [`(${left} older topic entries are not shown.)`] : []),
   '',
@@ -442,8 +442,8 @@ const reviewRequest = ({ who, tag = 'own', numbered, left = 0, sizes, where, ear
   `Write every new or changed entry in ${language}.`,
 ].join('\n')
 
-const askRequest = ({ name, group = false, numbered, language, text }) => [
-  group ? `Entries of the group chat "${name}" (group: shared by its members):` : `Entries of ${name} (yours: ${name}'s own; team: shared by every Bot):`,
+const askRequest = ({ name, group = false, isolation = false, numbered, language, text }) => [
+  group ? `Entries of the group chat "${name}" (group: shared by its members):` : isolation ? `Entries of ${name} (yours: ${name}'s own):` : `Entries of ${name} (yours: ${name}'s own; team: shared by every Bot):`,
   ...(numbered.length > 0 ? numbered.map((item, index) => `[${index + 1}] (${item.scope}${item.file.topic ? ` · ${item.file.topic}` : ''}) ${item.text}`) : ['(none yet)']),
   '',
   `Write reply and every new entry in ${language}. The user says:`,
@@ -722,7 +722,7 @@ export function install(rt) {
     return { scope: ownScope(bot.id) }
   }
   function writeDenied(scope, botId) {
-    if (scope.kind === 'team') return writesTeam(botId) ? undefined : 'Only Main Bots and group admins write the team memory. Tell a Main Bot with message_bot what the team should know.'
+    if (scope.kind === 'team') return rt.botOf(botId)?.isolation === true ? 'This Bot is in an isolation space and keeps its own memory only: it has no team memory.' : writesTeam(botId) ? undefined : 'Only Main Bots and group admins write the team memory. Tell a Main Bot with message_bot what the team should know.'
     if (scope.kind === 'group') return rt.roomOf(scope.roomId)?.members.includes(botId) ? undefined : 'Only the members of a group chat write its memory.'
     if (scope.botId !== botId && !rt.isMain(botId)) return 'Only a Main Bot can change another Bot\'s memory. Use message_bot to tell that Bot instead.'
     return undefined
@@ -988,6 +988,9 @@ export function install(rt) {
     if (sessionId === undefined) return ''
     const bot = rt.botOf(rt.selfOf(sessionId))
     if (bot === undefined) return ''
+    // An isolation space's prompt is the user's alone: its memory is reached through
+    // its tools, never injected into the prompt.
+    if (bot.isolation === true) return ''
     // A section frozen under another role (made a Main Bot or a group admin since, or no
     // longer one) is frozen again, so the rule it states matches what the tools allow.
     // A group Session's section is the Bot's own; its group's memory comes as a message
@@ -1102,7 +1105,7 @@ export function install(rt) {
     added: today(),
   })
 
-  const SCOPE_WRITE = { type: 'string', description: '"own" for your memory, the default in your own chat; "group" for the memory of the group chat you speak in, the default there; "team" for the memory every Bot reads (Main Bots and group admins only); or a Bot\'s name to change that Bot\'s memory (Main Bots only, when the user asks)' }
+  const SCOPE_WRITE = { type: 'string', description: '"own" for your memory, the default in your own chat; "group" for the memory of the group chat you speak in, the default there; "team" for the memory every Bot reads (Main Bots and group admins only, and not an isolation space); or a Bot\'s name to change that Bot\'s memory (Main Bots only, when the user asks)' }
   const TOPIC_WHERE = { type: 'string', description: 'The topic the entry is in, if you know it; omit to look in every file' }
 
   // What remember and forget share: the caller, the scope, and the right to write it.
@@ -1200,7 +1203,11 @@ export function install(rt) {
     const roomId = rt.roomOf(sessionRoomId)?.members.includes(botId) ? sessionRoomId : undefined
     const { scope, error } = namedScope(raw, botId, roomId)
     if (error) return { error }
-    if (scope === undefined) return { scopes: roomId === undefined ? [ownScope(botId), TEAM] : [ownScope(botId), groupScope(roomId), TEAM] }
+    if (scope === undefined) {
+      return {
+        scopes: roomId === undefined ? [ownScope(botId), TEAM] : [ownScope(botId), groupScope(roomId), TEAM],
+      }
+    }
     if (scope.kind === 'bot' && scope.botId !== botId) {
       const allowed = rt.isMain(botId) || (rt.isPrivate(botId) && rt.botOf(scope.botId)?.private !== true)
       if (!allowed) return { error: 'Only a Main Bot can read another Bot\'s memory. Ask that Bot with message_bot instead.' }
@@ -1211,11 +1218,11 @@ export function install(rt) {
 
   rt.teamTools.push(defineTool({
     name: 'recall',
-    description: 'Search your memory, the team memory, and in a group chat the group memory, or read one topic whole. It also finds entries saved after this conversation began. With no arguments, lists what is saved where.',
+    description: 'Search your memory, the team memory (an isolation space has none), and in a group chat the group memory, or read one topic whole. It also finds entries saved after this conversation began. With no arguments, lists what is saved where.',
     parameters: {
       query: { type: 'string', description: 'Words to look for, separated by spaces. An entry must have all of them; when none has, those with the most are shown' },
       topic: { type: 'string', description: 'A topic to read whole, as listed with [[topic]]' },
-      scope: { type: 'string', description: 'Omit for yours, the team\'s, and in a group chat the group\'s; "own", "group", "team", or a Bot\'s name (Main Bots; private Bots may read public Bots)' },
+      scope: { type: 'string', description: 'Omit for yours, the team\'s (none in an isolation space), and in a group chat the group\'s; "own", "group", "team", or a Bot\'s name (Main Bots; private Bots may read public Bots)' },
     },
     output,
     async execute(args, exec) {
@@ -1382,7 +1389,8 @@ export function install(rt) {
     }
     const bot = rt.botOf(String(body.botId ?? ''))
     if (bot === undefined) throw new Error('Unknown Bot')
-    return { id: bot.id, name: bot.name, group: false, keeper: bot, tag: { sessionId: rt.chatOf(bot.id), kind: 'memory' }, scopes: { own: ownScope(bot.id), team: TEAM } }
+    const scopes = { own: ownScope(bot.id), team: TEAM }
+    return { id: bot.id, name: bot.name, group: false, keeper: bot, tag: { sessionId: rt.chatOf(bot.id), kind: 'memory' }, scopes }
   }
   const panelBody = panel => (panel.group ? { roomId: panel.id } : { botId: panel.id })
   const panelLabel = (panel, scope) => (scope.kind === 'team' ? 'the team memory' : panel.group ? 'the group memory' : `${panel.name}'s memory`)
@@ -1390,9 +1398,10 @@ export function install(rt) {
   function startSummary(panel, loaded, language, hash) {
     const { keeper } = panel
     const model = keeper.model
+    const isolated = !panel.group && panel.scopes.team === undefined
     const request = panel.group
       ? groupSummaryRequest({ name: panel.name, lines: linesFor(loaded.group), language })
-      : summaryRequest({ name: panel.name, own: linesFor(loaded.own), team: linesFor(loaded.team), language })
+      : summaryRequest({ name: panel.name, own: linesFor(loaded.own), team: isolated ? [] : linesFor(loaded.team), isolation: isolated, language })
     const job = (async () => {
       const text = await botShot(keeper, SUMMARY_SYSTEM, request, panel.tag)
       const value = { hash, text: text.slice(0, SUMMARY_TEXT_MAX), at: Date.now() }
@@ -1438,7 +1447,8 @@ export function install(rt) {
     const text = String(body.text ?? '').trim().slice(0, ASK_TEXT_MAX)
     if (text === '') throw new Error('Type a question or a change first')
     const numbered = await settled(() => Object.entries(panel.scopes).flatMap(([tag, scope]) => allEntries(loadScope(scope)).map(entry => ({ ...entry, scope: tag }))))
-    const answer = parseAsk(await botShot(panel.keeper, askSystem(panel.group), askRequest({ name: panel.name, group: panel.group, numbered, language: languageNow(), text }), panel.tag))
+    const isolated = !panel.group && panel.scopes.team === undefined
+    const answer = parseAsk(await botShot(panel.keeper, askSystem(panel.group, isolated), askRequest({ name: panel.name, group: panel.group, isolation: isolated, numbered, language: languageNow(), text }), panel.tag))
     const meta = { source: 'memory panel', by: 'user', added: today() }
     const home = panel.group ? 'group' : 'own'
     const changes = []
@@ -1801,8 +1811,9 @@ export function install(rt) {
     for (const change of changes) {
       // A keeper deleted mid-review keeps no more changes, its team ones included.
       if (rt.botOf(keeper.id) === undefined) return counts()
-      // Its role may change mid-review too, so each change asks again.
-      const team = teamWrites()
+      // Its role may change mid-review too, so each change asks again; an isolation
+      // space never writes the team memory, whatever the role.
+      const team = keeper.isolation === true ? false : teamWrites()
       const op = String(change?.op ?? '')
       const topic = op === 'add' && change?.topic !== undefined ? cleanTopic(String(change.topic)) : undefined
       const target = numbered[Number(change?.entry) - 1]
@@ -1924,14 +1935,15 @@ export function install(rt) {
     }
     // Only the user's words are kept, so lines without any need no model call.
     if (read.some(line => line.who === 'user')) {
-      const { homeFiles, teamFiles } = await settled(() => ({ homeFiles: loadScope(home), teamFiles: loadScope(TEAM) }))
+      const isolated = keeper.isolation === true
+      const { homeFiles, teamFiles } = await settled(() => ({ homeFiles: loadScope(home), teamFiles: isolated ? [] : loadScope(TEAM) }))
       const said = read.filter(line => line.who === 'user').map(line => line.text).join('\n')
       const tagged = group ? 'group' : 'own'
       const { numbered, left } = reviewEntries(homeFiles, teamFiles, REVIEW_MEMORY_MAX, said, tagged)
-      const sizes = { home: homeFiles[0].content.length, team: teamFiles[0].content.length }
+      const sizes = isolated ? undefined : { home: homeFiles[0].content.length, team: teamFiles[0].content.length }
       const earlier = batch.earlier.map(line => reviewLine(line.who, line.text, keeper))
       const language = writtenIn(read.filter(line => line.who === 'user').map(line => line.text.replace(/^User: /, '')), languageNow())
-      const reply = await botShot(keeper, reviewSystem({ teamWrites: teamWrites(), group }), reviewRequest({ who, tag: tagged, numbered, left, sizes, where: batch.where, earlier, fresh: fresh.texts, more, language }), tag)
+      const reply = await botShot(keeper, reviewSystem({ teamWrites: !isolated && teamWrites(), group, isolation: isolated }), reviewRequest({ who, tag: tagged, numbered, left, sizes, where: batch.where, earlier, fresh: fresh.texts, more, language, isolation: isolated }), tag)
       if (!alive()) return
       const parsed = parseReview(reply)
       // An answer that is no list of changes keeps nothing of the batch; the miss

@@ -2,12 +2,12 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { Config as PiAiConfig } from '@deepseek-ai/dsh-llm-pi-ai'
 import { install as installModels } from '../src/host/models.js'
-import { checkKey, install, keyRefFor } from '../src/host/providers.js'
+import { checkKey, install, keyRefFor, routeIdFor } from '../src/host/providers.js'
 
 // A DSH with the official DeepSeek route, an account route, and the pi-ai adapter: its
 // directory offers catalog providers, and its settings take path writes the way DSH's
 // do, under a revision. Routes come and go with the pi-ai section.
-function dsh({ keys = {}, readOnly = [], user = {}, base = {}, catalog = { anthropic: ['claude-a', 'claude-b'], moonshotai: ['kimi-k3'] } } = {}) {
+function dsh({ keys = {}, readOnly = [], user = {}, base = {}, secrets = {}, catalog = { anthropic: ['claude-a', 'claude-b'], moonshotai: ['kimi-k3'] } } = {}) {
   const store = { ...keys }
   const writes = []
   const listeners = new Map()
@@ -65,10 +65,19 @@ function dsh({ keys = {}, readOnly = [], user = {}, base = {}, catalog = { anthr
       discoverModels: async (ns, request) => { discovered.push([ns, request]); return [{ id: 'relay-1', name: 'Relay One', contextWindow: 128000, inputModalities: ['text'] }, { id: 'relay-2' }] },
     },
   }
-  const rt = { ctx, state: { bots: {} } }
+  const rt = {
+    ctx,
+    state: { bots: {} },
+    loadSecrets: async () => {},
+    canUseSecret: (name, botId) => {
+      const secret = secrets[name]
+      return secret !== undefined && (secret.scope === 'all' || (Array.isArray(secret.scope) && secret.scope.includes(botId)))
+    },
+    secretValue: name => secrets[name]?.value,
+  }
   installModels(rt)
   install(rt)
-  return { rt, store, writes, listeners, discovered }
+  return { rt, store, writes, listeners, discovered, secrets }
 }
 
 const needing = async rt => (await rt.catalog({ fresh: true })).filter(entry => entry.needsKey).map(entry => entry.provider)
@@ -278,4 +287,145 @@ test('an API key is what an HTTP header carries, without a NAME= or quotes', () 
 test('a route\'s key reference follows DSH\'s own Models page', () => {
   assert.equal(keyRefFor('moonshotai'), 'MOONSHOTAI_API_KEY')
   assert.equal(keyRefFor('my-gateway2'), 'MY_GATEWAY2_API_KEY')
+})
+
+const ISO = { id: 'session-iso-1', name: 'Chat Only', isolation: true }
+const ISO_SECRETS = {
+  RELAY_KEY: { value: 'sk-relay', scope: ['session-iso-1'] },
+  ELSEWHERE_KEY: { value: 'sk-elsewhere', scope: ['session-other'] },
+}
+const endpoint = { baseURL: 'https://relay.example/v1', model: 'relay-1' }
+
+test('an isolation Bot sets its own endpoint and key from a saved secret', async () => {
+  const { rt, store, writes } = dsh({ secrets: ISO_SECRETS })
+  rt.state.bots[ISO.id] = ISO
+  const routeId = routeIdFor(ISO.id)
+  const result = await rt.setBotModelEndpoint(ISO, { ...endpoint, name: 'Relay', keySecret: 'RELAY_KEY' })
+  assert.match(routeId, /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/)
+  assert.equal(result.ref, `${routeId}/relay-1`)
+  assert.equal(result.routeId, routeId)
+  assert.equal(result.served, true)
+  const write = writes.find(([ns, ops]) => ns === 'llm-pi-ai' && ops[0]?.op === 'set')
+  assert.deepEqual(write[1][0].path, ['providers', routeId])
+  assert.deepEqual(write[1][0].value, {
+    displayName: 'Relay',
+    api: 'openai-completions',
+    baseURL: 'https://relay.example/v1',
+    compat: {
+      supportsDeveloperRole: false,
+      supportsStore: false,
+      maxTokensField: 'max_tokens',
+      requiresReasoningContentOnAssistantMessages: true,
+    },
+    models: [{ id: 'relay-1' }],
+    apiKeyEnv: keyRefFor(routeId),
+  })
+  assert.equal(store[keyRefFor(routeId)], 'sk-relay')
+  assert.equal(JSON.stringify(result).includes('sk-relay'), false)
+})
+
+test('reconfiguring the same endpoint keeps its key, and a new endpoint drops it', async () => {
+  const { rt, store, writes } = dsh({ secrets: ISO_SECRETS })
+  rt.state.bots[ISO.id] = ISO
+  const routeId = routeIdFor(ISO.id)
+  const ref = keyRefFor(routeId)
+  await rt.setBotModelEndpoint(ISO, { ...endpoint, keySecret: 'RELAY_KEY' })
+  writes.length = 0
+  const moved = await rt.setBotModelEndpoint(ISO, { ...endpoint, model: 'relay-2' })
+  assert.equal(moved.ref, `${routeId}/relay-2`)
+  assert.equal(store[ref], 'sk-relay')
+  assert.equal(writes.some(([kind]) => kind === 'unset'), false)
+
+  writes.length = 0
+  const elsewhere = await rt.setBotModelEndpoint(ISO, { ...endpoint, baseURL: 'https://other.example/v1' })
+  assert.equal(elsewhere.served, true)
+  assert.equal('unset' in Object.fromEntries(writes.filter(([kind]) => kind === 'unset')), true)
+  assert.deepEqual(writes.filter(([kind]) => kind === 'unset'), [['unset', ref]])
+  assert.equal(ref in store, false)
+  const profile = writes.find(([ns, ops]) => ns === 'llm-pi-ai' && ops[0]?.op === 'set')[1][0].value
+  assert.equal('apiKeyEnv' in profile, false)
+  // pi-ai refuses a request with no Authorization header at all, so a keyless
+  // route still sends a placeholder.
+  assert.deepEqual(profile.headers, { Authorization: 'Bearer none' })
+})
+
+test('clear_key removes the key without changing the address', async () => {
+  const { rt, store, writes } = dsh({ secrets: ISO_SECRETS })
+  rt.state.bots[ISO.id] = ISO
+  const routeId = routeIdFor(ISO.id)
+  await rt.setBotModelEndpoint(ISO, { ...endpoint, keySecret: 'RELAY_KEY' })
+  writes.length = 0
+  const result = await rt.setBotModelEndpoint(ISO, { ...endpoint, clearKey: true })
+  assert.equal(result.served, true)
+  assert.deepEqual(writes.filter(([kind]) => kind === 'unset'), [['unset', keyRefFor(routeId)]])
+  assert.equal(keyRefFor(routeId) in store, false)
+  const profile = writes.find(([ns, ops]) => ns === 'llm-pi-ai' && ops[0]?.op === 'set')[1][0].value
+  assert.deepEqual(profile.headers, { Authorization: 'Bearer none' })
+})
+
+test('a keyless bot route written earlier gets its placeholder header on load', async () => {
+  const routeId = routeIdFor(ISO.id)
+  const { rt, writes } = dsh({
+    user: { providers: { [routeId]: { api: 'openai-completions', baseURL: 'http://localhost:11434/v1', models: [{ id: 'qwen35-9b-uncensored:latest' }] } } },
+    catalog: { [routeId]: [] },
+  })
+  await rt.providersView()
+  const repaired = writes.find(([ns, ops]) => ns === 'llm-pi-ai' && ops.some(op => op.path?.[2] === 'headers'))
+  assert.deepEqual(repaired[1].find(op => op.path?.[2] === 'headers'), { op: 'set', path: ['providers', routeId, 'headers'], value: { Authorization: 'Bearer none' } })
+})
+
+test('a key managed outside DS Bot is not sent to another endpoint', async () => {
+  const routeId = routeIdFor(ISO.id)
+  const { rt } = dsh({
+    secrets: ISO_SECRETS,
+    base: { providers: { [routeId]: { apiKeyEnv: keyRefFor(routeId), models: [{ id: 'relay-1' }] } } },
+    readOnly: [keyRefFor(routeId)],
+  })
+  rt.state.bots[ISO.id] = ISO
+  await assert.rejects(
+    rt.setBotModelEndpoint(ISO, { ...endpoint, baseURL: 'https://other.example/v1' }),
+    /comes with this setup/,
+  )
+})
+
+test('only an isolation space sets its own endpoint, with a valid address and a secret of its own', async () => {
+  const { rt } = dsh({ secrets: ISO_SECRETS })
+  rt.state.bots[ISO.id] = ISO
+  await assert.rejects(rt.setBotModelEndpoint({ id: 'plain', name: 'Plain' }, endpoint), /isolation space/)
+  await assert.rejects(rt.setBotModelEndpoint(ISO, { ...endpoint, api: 'nope' }), /protocol/)
+  await assert.rejects(rt.setBotModelEndpoint(ISO, { ...endpoint, baseURL: 'ftp://relay.example' }), /http or https/)
+  await assert.rejects(rt.setBotModelEndpoint(ISO, { ...endpoint, baseURL: 'https://user:pass@relay.example/v1' }), /user name or password/)
+  await assert.rejects(rt.setBotModelEndpoint(ISO, { ...endpoint, model: '  ' }), /model id/)
+  await assert.rejects(rt.setBotModelEndpoint(ISO, { ...endpoint, keySecret: 'OTHER_KEY' }), /not saved/)
+  const denied = await rt.setBotModelEndpoint(ISO, { ...endpoint, keySecret: 'ELSEWHERE_KEY' }).then(() => '', error => error.message)
+  assert.match(denied, /not saved for Chat Only/)
+  assert.equal(denied.includes('sk-elsewhere'), false)
+})
+
+test('deleting an isolation Bot removes its route and key, unless another Bot names the route', async () => {
+  const { rt, store, writes } = dsh({ secrets: ISO_SECRETS })
+  rt.state.bots[ISO.id] = ISO
+  const routeId = routeIdFor(ISO.id)
+  const ref = keyRefFor(routeId)
+  await rt.setBotModelEndpoint(ISO, { ...endpoint, keySecret: 'RELAY_KEY' })
+  writes.length = 0
+  rt.state.bots.other = { id: 'other', name: 'Other', model: `${routeId}/relay-1` }
+  await rt.removeBotModelEndpoint(ISO)
+  assert.deepEqual(writes, [])
+  assert.equal(store[ref], 'sk-relay')
+
+  delete rt.state.bots.other
+  await rt.removeBotModelEndpoint(ISO)
+  assert.deepEqual(writes.filter(([kind]) => kind === 'unset'), [['unset', ref]])
+  assert.equal(ref in store, false)
+  assert.equal((await rt.providersView()).providers.some(provider => provider.id === routeId), false)
+})
+
+test('a Bot route id is stable and legal whatever the Bot id holds', () => {
+  for (const id of ['session-iso-1', 'SESSION__Bad.Id', '123', '!!', 'a'.repeat(200)]) {
+    const route = routeIdFor(id)
+    assert.match(route, /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/)
+    assert.equal(route, routeIdFor(id))
+  }
+  assert.notEqual(routeIdFor('a'), routeIdFor('b'))
 })

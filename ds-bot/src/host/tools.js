@@ -3,7 +3,7 @@
 import { randomUUID } from 'node:crypto'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { readAvatar } from './avatar.js'
-import { COLORS, EXTRA_COLORS, ISOLATION_REFUSAL, ISOLATION_TOOLS, MESSAGE_INLINE_MAX, ROOM_MODES, SOURCE_KIND } from './constants.js'
+import { BLOCKING_QUESTION_TOOL, COLORS, DELEGATION_TOOLS, EXTRA_COLORS, HIDDEN_SECTIONS, HIDDEN_TOOL_GROUPS, HIDDEN_TOOLS, ISOLATION_REFUSAL, ISOLATION_TOOLS, MESSAGE_INLINE_MAX, ROOM_MODES, SOURCE_KIND } from './constants.js'
 import { within } from './folders.js'
 import { absoluteLinks } from './links.js'
 import { NAME_MAX } from './requests.js'
@@ -13,21 +13,14 @@ import { checkShownView, showViewDescription, showViewParameters } from 'deep-vi
 
 export const output = { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: String(value) }] }
 export const GROUP_REF = { type: 'string', required: true, description: 'Exact group chat name from list_bots' }
-const BLOCKING_QUESTION_TOOL = 'ask_user_question'
-// DS Bot has its own group goals; DSH's session goal still does not survive conversation parts.
-const GOAL_TOOLS = ['create_goal', 'update_goal', 'get_goal']
-// DSH's delegation tools start child agents the user cannot watch or stop, and they
-// end with the conversation part that started them; Bots hand work to other Bots.
-// Agent Teams' teammates are such children too (#973).
-const DELEGATION_TOOLS = ['subagent', 'subagent_fork', 'subagent_codex', 'subagent_claude_code', 'list_subagent_models', 'send_message', 'interrupt_agent', 'list_agents', 'workflow', 'ralph', 'spawn_teammate', 'wait_agent', 'team_task_create', 'team_task_get', 'team_task_list', 'team_task_update']
-// restrict() refuses a whole list when one name is registered in the Agent's own
-// scope, so each group is masked on its own.
-const HIDDEN_TOOL_GROUPS = [[BLOCKING_QUESTION_TOOL, ...GOAL_TOOLS], DELEGATION_TOOLS]
-const HIDDEN_TOOLS = HIDDEN_TOOL_GROUPS.flat()
-// The guidance DSH writes into the prompt for the hidden tools. Agent Teams makes
-// every root Session a Team Lead and tells it to spawn teammates in `team:policy`;
-// its `team:identity` context is required, so DSH puts it back after any filter.
-const HIDDEN_SECTIONS = new Set([...HIDDEN_TOOLS.map(name => `tool:${name}`), 'tool:goal', 'team:policy'])
+// An isolation space keeps the user's edited prompt alone: its `bot-identity` section
+// and the guidance of the chat tools it may call. Every base section — the harness
+// identity, the preset persona, the team and plan rules, the tool manuals — stays out.
+const keepsIsolationSection = (name, allowed = name => ISOLATION_TOOLS.includes(name)) => name === 'bot-identity'
+  || (typeof name === 'string' && name.startsWith('tool:') && allowed(name.slice(5)))
+// DSH 0.2.x restores required runtime facts after the assembly waterfall. An isolation
+// space shadows them with empty scoped contributions, so no base text survives that.
+const ISOLATION_CONTEXT_SHADOWS = ['subagent:identity', 'team:identity']
 const GOAL_REFUSAL = 'Bot chats do not run /goal. To give a group a goal, use Set a goal in its + menu.'
 // DSH 0.2.2's schedule tools can deliver to a new Session, which is outside the team and
 // has no Bot; a Bot's tasks deliver to its own chat, which DS Bot moves on with each part.
@@ -385,6 +378,14 @@ export function install(rt) {
       // approval card is raised for a folder the Bot could never reach.
       if (bot.isolation === true && typeof args.work_dir === 'string') {
         return `${bot.name} is in an isolation space: it keeps its own empty folder.`
+      }
+      if (bot.isolation === true && caller.id === bot.id) {
+        if (args.model !== undefined || args.effort !== undefined) {
+          return `${bot.name} is in an isolation space: you can update your own name, role, instructions, color, or data-URL avatar, but cannot change general model or effort settings.`
+        }
+        if (typeof args.avatar === 'string' && args.avatar.trim() !== '' && !/^data:/i.test(args.avatar.trim())) {
+          return `${bot.name} is in an isolation space: avatar cannot read local file paths; pass an empty string to clear or a data URL.`
+        }
       }
       try {
         const { name: newName, role, instructions, color, model, effort } = args
@@ -810,13 +811,15 @@ export function install(rt) {
     let held = scoped.get(id)
     // The local-agent tools (the CLI permission bridge) join the scope only of
     // a Bot whose route is a local agent; they are not in rt.teamTools. A Bot
-    // can move onto or off a local route after its Agent exists.
+    // can move onto or off a local route after its Agent exists. An isolation
+    // space Bot likewise gains its own tools, and only it, in the same scope.
     const self = owns ? rt.botOf(rt.selfOf(id)) : undefined
     const localBot = rt.isLocalAgentRef?.(self?.appliedModel ?? self?.model) === true
+    const isolatedBot = self?.isolation === true
     // A Session that left the team, a scope of the wrong kind, a fresh Agent
     // for one Session, or a Bot that changed between a local route and a model
     // all start over; a wanted scope is registered again below.
-    if (held !== undefined && (!wanted || held.agent !== agent || held.relay !== relayOnly || (held.tools === true && held.local !== localBot))) {
+    if (held !== undefined && (!wanted || held.agent !== agent || held.relay !== relayOnly || (held.tools === true && (held.local !== localBot || held.isolation !== isolatedBot)))) {
       unscope(id)
       held = undefined
     }
@@ -831,7 +834,7 @@ export function install(rt) {
     const disposers = []
     const failed = []
     const registered = []
-    for (const def of [...rt.teamTools, ...(localBot ? (rt.localAgentTools ?? []) : [])]) {
+    for (const def of [...rt.teamTools, ...(localBot ? (rt.localAgentTools ?? []) : []), ...(isolatedBot ? (rt.isolationTools ?? []) : [])]) {
       if (relayOnly && def.name !== 'group_relay') continue
       try {
         const dispose = agent.ctx.tools.register(def)
@@ -852,6 +855,7 @@ export function install(rt) {
     held.relay = relayOnly
     held.tools = true
     held.local = localBot
+    held.isolation = isolatedBot
     held.disposers.push(...disposers)
     scoped.set(id, held)
     // A scope made outside creation never reached a collected tool list; the
@@ -867,21 +871,42 @@ export function install(rt) {
   // refuses calls. The assembly filter goes on every Bot Session whether or not
   // the tools are served yet: subagent's own agent/created listener can run
   // after this one.
+  const shadowIsolationContexts = (agent, held) => {
+    if (held.isolationShadows === true || typeof agent.ctx?.systemPrompt?.context !== 'function') return
+    if (rt.botOf(rt.selfOf(agent?.session?.id ?? agent?.id))?.isolation !== true) return
+    for (const name of ISOLATION_CONTEXT_SHADOWS) {
+      try {
+        const dispose = agent.ctx.systemPrompt.context({ name, order: 120, required: true, text: '' })
+        if (typeof dispose === 'function') held.disposers.push(dispose)
+      } catch (error) {
+        rt.warn('ds-bot: shadowing the %s context for %s failed: %s', name, agent?.session?.id, error)
+      }
+    }
+    held.isolationShadows = true
+  }
+
   const filterBotAssembly = (agent, held) => {
+    shadowIsolationContexts(agent, held)
     if (held.filtered === true || typeof agent.ctx?.on !== 'function') return
     const dispose = agent.ctx.on('system-prompt/assemble', async (_assembly, _context, next) => {
       const assembled = await next()
-      // An isolation space Bot keeps only its chat tools and their guidance, even in an
-      // assembly that still carries the tool list; the guard and the mask do the rest.
-      const isolated = rt.botOf(rt.selfOf(agent?.session?.id ?? agent?.id))?.isolation === true
-      const keep = name => !HIDDEN_TOOLS.includes(name) && (!isolated || ISOLATION_TOOLS.includes(name))
+      // An isolation space Bot keeps only its chat tools, the tools the user granted it,
+      // and their guidance, even in an assembly that still carries the tool list; the
+      // guard and the mask do the rest.
+      const bot = rt.botOf(rt.selfOf(agent?.session?.id ?? agent?.id))
+      const isolated = bot?.isolation === true
+      const allowed = name => ISOLATION_TOOLS.includes(name) || (bot?.isolationGrants ?? []).includes(name)
+      const keep = name => !HIDDEN_TOOLS.includes(name) && (!isolated || allowed(name))
       // DSH 0.2.2 adds the tool list after this waterfall (#814), so only an
       // older assembly still carries tools to drop here.
       return {
         ...assembled,
         ...Array.isArray(assembled.tools) ? { tools: assembled.tools.filter(tool => keep(tool.name)) } : {},
         sections: assembled.sections.filter(section => !HIDDEN_SECTIONS.has(section.name)
-          && (!isolated || !(typeof section.name === 'string' && section.name.startsWith('tool:') && !ISOLATION_TOOLS.includes(section.name.slice(5))))),
+          && (!isolated || keepsIsolationSection(section.name, allowed))),
+        // An isolation space's prompt is the user's words alone: the runtime context
+        // DSH would put before the request (time, working directory, interface) stays out.
+        ...isolated ? { contexts: [] } : {},
       }
     })
     held.filtered = true
@@ -913,51 +938,71 @@ export function install(rt) {
     }
   }
 
+  // Both masks reconcile by name against the reason they exist for: a name is
+  // recorded as denied before the restrict() that creates it, and only lifted when
+  // the reason is gone. restrict() and its lift synchronously emit tools/change,
+  // which re-enters this reconcile through the listener below; the recorded name
+  // makes that pass a no-op instead of lifting a mask that was just made (the old
+  // lift-all-and-recompute read the visible set, which shrinks with every mask, so
+  // it never matched and recursed forever).
+  const reconcileMask = (agent, held, key, wants) => {
+    if (typeof agent.ctx?.tools?.restrict !== 'function' || typeof ctx.tools?.schemas !== 'function') return
+    const lifts = held[key] ??= new Map()
+    const names = new Set(ctx.tools.schemas(agent).map(schema => schema.name))
+    for (const name of lifts.keys()) names.add(name)
+    for (const [name, lift] of [...lifts]) {
+      if (wants(name)) continue
+      lifts.delete(name)
+      if (typeof lift !== 'function') continue
+      try { lift() } catch { /* the scope is gone */ }
+    }
+    for (const name of names) {
+      if (lifts.has(name) || !wants(name)) continue
+      // Names served from the Agent's own scope cannot be restricted; keeping them
+      // recorded means they are tried once, not on every tools/change.
+      lifts.set(name, undefined)
+      try {
+        const lift = agent.ctx.tools.restrict({ deny: [name] })
+        if (typeof lift === 'function') lifts.set(name, lift)
+      } catch { /* a scoped name cannot be restricted */ }
+    }
+  }
   // Per-Bot connector switches (state.connectors[id].offFor): deny the served
   // tools matching each off connector's prefix. Re-applied on tools/change.
   const maskConnectorTools = (agent, held) => {
-    if (typeof agent.ctx?.tools?.restrict !== 'function' || typeof ctx.tools?.schemas !== 'function') return
-    const botId = rt.selfOf(agent.session?.id)
+    const botId = rt.selfOf(agent?.session?.id)
     const prefixes = rt.connectorOffFor?.(botId) ?? []
-    const served = new Set(ctx.tools.schemas(agent).map(schema => schema.name))
-    const deny = [...served].filter(name => prefixes.some(prefix => name.startsWith(prefix)))
-    const before = held.connectorDenied ?? new Set()
-    if (deny.length === before.size && deny.every(name => before.has(name))) return
-    for (const lift of held.connectorLifts ?? []) { try { lift() } catch { /* already lifted */ } }
-    held.connectorLifts = []
-    held.connectorDenied = new Set(deny)
-    for (const name of deny) {
-      try {
-        const lift = agent.ctx.tools.restrict({ deny: [name] })
-        if (typeof lift === 'function') held.connectorLifts.push(lift)
-      } catch { /* a scoped name cannot be restricted; connectors are global */ }
-    }
+    if (prefixes.length === 0 && !(held.connectorLifts?.size > 0)) return
+    reconcileMask(agent, held, 'connectorLifts', name => prefixes.some(prefix => name.startsWith(prefix)))
   }
   // An isolation space Bot is not even offered the machine tools: whatever the profile
-  // serves is masked down to the chat tools. A name in the Agent's own scope cannot be
-  // restricted, so the guard below refuses every call outside the allowlist as well.
+  // serves is masked down to the chat tools and the tools its user granted. A name in
+  // the Agent's own scope cannot be restricted, so the guard below refuses every call
+  // outside that set as well.
   const maskIsolationTools = (agent, held) => {
     const bot = rt.botOf(rt.selfOf(agent?.session?.id ?? agent?.id))
-    if (bot?.isolation !== true) return
-    if (typeof agent.ctx?.tools?.restrict !== 'function' || typeof ctx.tools?.schemas !== 'function') return
-    const deny = ctx.tools.schemas(agent).map(schema => schema.name).filter(name => !ISOLATION_TOOLS.includes(name))
-    const before = held.isolationDenied ?? new Set()
-    if (deny.length === before.size && deny.every(name => before.has(name))) return
-    for (const lift of held.isolationLifts ?? []) { try { lift() } catch { /* already lifted */ } }
-    held.isolationLifts = []
-    held.isolationDenied = new Set(deny)
-    for (const name of deny) {
-      try {
-        const lift = agent.ctx.tools.restrict({ deny: [name] })
-        if (typeof lift === 'function') held.isolationLifts.push(lift)
-      } catch { /* a scoped name cannot be restricted; the guard still refuses it */ }
+    const isolated = bot?.isolation === true
+    if (!isolated && !(held.isolationLifts?.size > 0)) return
+    const granted = new Set(bot?.isolationGrants ?? [])
+    reconcileMask(agent, held, 'isolationLifts', name => isolated && !ISOLATION_TOOLS.includes(name) && !granted.has(name))
+  }
+  // One guard: a mask pass runs inside its own tools/change listener, so a re-entrant
+  // pass returns instead of reconciling the same held entry again.
+  let applyingToolMasks = false
+  const applyToolMasks = (held) => {
+    if (applyingToolMasks) return
+    applyingToolMasks = true
+    try {
+      try { maskConnectorTools(held.agent, held) } catch (error) { rt.warn('ds-bot: connector mask failed: %s', error) }
+      try { maskIsolationTools(held.agent, held) } catch (error) { rt.warn('ds-bot: isolation mask failed: %s', error) }
+    } finally {
+      applyingToolMasks = false
     }
   }
   const reapplyToolMasks = () => {
     for (const held of scoped.values()) {
       if (held.agent === undefined) continue
-      try { maskConnectorTools(held.agent, held) } catch (error) { rt.warn('ds-bot: connector mask failed: %s', error) }
-      try { maskIsolationTools(held.agent, held) } catch (error) { rt.warn('ds-bot: isolation mask failed: %s', error) }
+      applyToolMasks(held)
     }
   }
 
@@ -1013,8 +1058,7 @@ export function install(rt) {
     if (held.restricted !== true && typeof agent.ctx?.tools?.restrict === 'function') {
       maskHiddenTools(agent, held, new Set(ctx.tools.schemas(agent).map(schema => schema.name)))
     }
-    maskConnectorTools(agent, held)
-    maskIsolationTools(agent, held)
+    applyToolMasks(held)
   }
   ctx.on('tools/change', () => reapplyToolMasks())
   // A new Bot, part, or group Session gets its Agent before ds-bot records it, so the
@@ -1027,7 +1071,7 @@ export function install(rt) {
     // scoped name, a stale list, a plugin added later — is still refused here, whatever
     // the Bot's instructions say it may do.
     const bot = rt.botOf(rt.selfOf(exec.agent?.id))
-    if (bot?.isolation === true && !ISOLATION_TOOLS.includes(exec.name)) return ISOLATION_REFUSAL
+    if (bot?.isolation === true && !ISOLATION_TOOLS.includes(exec.name) && !(bot.isolationGrants ?? []).includes(exec.name)) return ISOLATION_REFUSAL
     if (exec.name === BLOCKING_QUESTION_TOOL) return `Bots cannot use ${BLOCKING_QUESTION_TOOL}. Ask with ask_user in your own chat, or ask in your reply.`
     const target = exec.arguments?.target
     if (SCHEDULE_TARGET_TOOLS.includes(exec.name) && target !== undefined && target !== 'this_session') return SCHEDULE_TARGET_REFUSAL

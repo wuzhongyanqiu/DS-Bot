@@ -3,9 +3,11 @@ import { randomUUID } from 'node:crypto'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { install as installBtw } from './btw.js'
 import { install as installSide } from './side.js'
+import { install as installTts } from './tts.js'
+import { install as installImageGen } from './imagegen.js'
 import { handoffReply, questionReply, viewReply } from './parts.js'
 import { validateViewAnswer } from 'deep-view/core'
-import { COLORS, EXTRA_COLORS, ROUTE } from './constants.js'
+import { COLORS, EXTRA_COLORS, ISOLATION_TOOLS, ROUTE } from './constants.js'
 
 const LANGUAGES = { zh: 'Chinese (简体中文)', en: 'English' }
 const RUN_STATS = ['sessionStats', 'tokenUsage', 'contextPressure']
@@ -23,6 +25,8 @@ export function errorCode(error) {
 export function install(rt) {
   installBtw(rt)
   installSide(rt)
+  installTts(rt)
+  installImageGen(rt)
   const { ctx, state } = rt
 
   // The DSH interface language of the last browser that asked for the team.
@@ -86,6 +90,9 @@ export function install(rt) {
     connectorRequests: state.connectorRequests ?? {},
     mailRequests: state.mailRequests ?? {},
     colors: [...COLORS, ...EXTRA_COLORS],
+    // The chat tools an isolation space always keeps; the settings page names them
+    // beside the names the user grants.
+    isolationTools: ISOLATION_TOOLS,
     models: rt.cachedCatalog(),
     defaultModel: rt.cachedDefault() ?? null,
     permissions: rt.permissionCatalog?.() ?? null,
@@ -141,7 +148,7 @@ export function install(rt) {
   }
   // What a host that only reads the team may still answer.
   // Updates change the dsh profile, not the team, so a reading host may run them too.
-  const READS = new Set(['state', 'models', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'room-progress', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'thinking', 'avatar-library', 'computer-system-status', 'computer-shot', 'local-agents', 'visible-session', 'whale-status', 'whale-runs'])
+  const READS = new Set(['state', 'models', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'room-progress', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'thinking', 'avatar-library', 'computer-system-status', 'computer-shot', 'local-agents', 'visible-session'])
 
   async function setPrefs(body) {
     if (body.theme !== undefined) {
@@ -679,20 +686,6 @@ export function install(rt) {
           if (bot === undefined) return fail('Unknown Bot', 'bot/not-found')
           return ok(await rt.switchPart(bot.id, String(body.sessionId ?? '')))
         }
-        // The Big Fish board: one read-only snapshot of the whale loop. No writes,
-        // no model calls; the client only asks when the panel opens.
-        case 'whale-status':
-          return ok(await rt.whaleStatus())
-        case 'whale-runs':
-          return ok(await rt.whaleRuns())
-        // Human controls for the Big Fish loop: the host forwards to the bridge with
-        // its console token. A 429 keeps the remaining seconds as data, not an error.
-        case 'whale-pause':
-          return ok(await rt.whalePause(body.mode))
-        case 'whale-resume':
-          return ok(await rt.whalePause('resume'))
-        case 'whale-wake':
-          return ok(await rt.whaleWake())
         case 'diagnostics':
           await rt.load()
           return ok(await rt.diagnostics.report(body))
@@ -701,6 +694,10 @@ export function install(rt) {
         case 'diagnostics-clear':
           await rt.diagnostics.clear()
           return ok(true)
+        // Voice chat's reader: the local Qwen3-TTS worker renders one reply chunk
+        // in the cloned voice. The first call pays the model load.
+        case 'tts':
+          return ok(await rt.tts(body?.text))
         default:
           if (endpoint.startsWith('computer-')) {
             await rt.load()

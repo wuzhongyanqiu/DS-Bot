@@ -1042,7 +1042,7 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
 // The calls ToolCell draws. A PTC program (`run_code`) dispatches the real tools as
 // its sub-calls, so a call draws by its own name wherever it sits in the tree.
 const isComputerCall = name => name === 'cua' || name?.startsWith('cua_driver_native__') === true
-const DRAWN = new Set(['message_bot', 'stop_bot', 'create_bot', 'update_bot', 'group_relay', 'create_group', 'update_group', 'delete_group', 'post_to_group', 'ask_user', 'request_secret', 'request_connector', 'mail_send', 'ask_user_question', 'show_view', 'browser_handoff', 'read_group_chat', 'remember', 'forget'])
+const DRAWN = new Set(['message_bot', 'stop_bot', 'create_bot', 'update_bot', 'group_relay', 'create_group', 'update_group', 'delete_group', 'post_to_group', 'ask_user', 'request_secret', 'request_connector', 'mail_send', 'ask_user_question', 'show_view', 'browser_handoff', 'read_group_chat', 'remember', 'forget', 'generate_image'])
 // Calls whose card a dock above the composer carries when the call is not drawn.
 const CARDS = new Set(['ask_user', 'request_secret', 'request_connector', 'mail_send', 'show_view', 'browser_handoff', 'computer_handoff'])
 
@@ -1119,6 +1119,14 @@ function renderCall(call, { sessionId, roster, actions, useUi, useWork, findBot,
       const room = roster.rooms.find(entry => entry.name === name)
       return h(GroupEvent, { prefix: t(verbs[0]), room: tool === 'delete_group' ? undefined : room, name, roster, actions })
     }
+    case 'generate_image': {
+      if (!done) return h(CellEmpty)
+      const image = (call.content ?? []).find(block => block?.type === 'image' && block.attachment !== undefined)
+      if (call.isError || image === undefined) {
+        return h('div', { className: 'bt-event', title: contentText(call.content) }, call.isError ? t("Couldn't draw the picture") : t('Drew nothing'))
+      }
+      return h(GeneratedImage, { sessionId, attachment: image.attachment, caption: arg('prompt') ?? '', actions })
+    }
     case 'ask_user': {
       const question = roster.questions?.[sessionId]
       if (!question || question.callId !== call.callId) {
@@ -1169,6 +1177,22 @@ function renderCall(call, { sessionId, roster, actions, useUi, useWork, findBot,
       }
       return h(CellEmpty)
   }
+}
+
+// A picture the Bot drew: shown at reading size, opened larger on click. The host
+// keeps the bytes as an attachment; the conversation service turns that into a URL.
+function GeneratedImage({ sessionId, attachment, caption, actions }) {
+  const [url, setUrl] = useState(null)
+  const [open, setOpen] = useState(false)
+  useEffect(() => {
+    let live = true
+    setUrl(null)
+    void Promise.resolve(actions.botImageUrl?.(sessionId, attachment)).then(value => { if (live) setUrl(value ?? null) }, () => {})
+    return () => { live = false }
+  }, [sessionId, attachment?.attachmentId])
+  if (url === null) return h('div', { className: 'bt-draw bt-draw-wait', 'aria-hidden': true })
+  return h('button', { type: 'button', className: open ? 'bt-draw bt-draw-open' : 'bt-draw', title: caption, 'aria-label': t('Drawn picture'), onClick: () => setOpen(value => !value) },
+    h('img', { src: url, alt: caption || t('Drawn picture'), loading: 'lazy' }))
 }
 
 export function ToolCell({ node, sessionId, useRoster, useUi, useWork, useHeldCards, useBrowserHolds, useBrowserTabs, useBrowserPages, useComputer, actions }) {

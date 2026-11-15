@@ -7,7 +7,7 @@ import { call } from './api.js'
 import { GlobeIcon, Favicon, PanelMenu, menuItemFor } from './browser-pane.js'
 import { drawerMenuKeys } from './side-model.js'
 import { useEscape } from './overlay-hooks.js'
-import { BotSettingsForm } from './bot-settings.js'
+import { BotSettingsForm, InlineText } from './bot-settings.js'
 import { GroupSettingsForm, ROOM_MODES, roomSubtitle, shownMode } from './group-settings.js'
 import { ModelMenu, modelOf } from './model-menu.js'
 import { FolderMenu } from './folder-menu.js'
@@ -113,15 +113,27 @@ function BrowserCards({ bot, sessionId, roster, actions, useBrowserTabs, useBrow
 }
 
 // About: a Bot's instructions or a group's notice in the overview, folded to five lines.
-function About({ text, title = 'About' }) {
+// With `onSave` it is the Bot's persona and edits in place, so the front end is not a
+// dead end for a Bot whose profile must stay editable.
+function About({ text, title = 'About', onSave }) {
   const [open, setOpen] = useState(false)
+  const [editing, setEditing] = useState(false)
   const long = text.split('\n').length > 5 || text.length > 240
   const body = useRef(null)
   useMorph(body, open)
+  const label = t(title)
   return h('div', null,
-    h('div', { className: 'bt-section-title' }, t(title)),
-    h('div', { ref: body, className: 'bt-about', 'data-open': open || undefined }, text),
-    long ? h('button', { type: 'button', className: 'bt-more', onClick: () => setOpen(value => !value) }, open ? t('Show less') : t('Show more')) : null)
+    h('div', { className: onSave ? 'bt-section-title bt-about-head' : 'bt-section-title' },
+      label,
+      onSave ? h('button', { type: 'button', className: 'bt-more', onClick: () => setEditing(true) }, t('Edit')) : null),
+    editing
+      ? h(InlineText, {
+          label, value: text, multiline: true,
+          onSave: next => onSave(next),
+          onFinish: () => setEditing(false),
+        })
+      : h('div', { ref: body, className: 'bt-about', 'data-open': open || undefined }, text),
+    !editing && long ? h('button', { type: 'button', className: 'bt-more', onClick: () => setOpen(value => !value) }, open ? t('Show less') : t('Show more')) : null)
 }
 
 // A group's face in its details: its first members side by side, each on a disc that
@@ -335,7 +347,7 @@ export function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, ro
           h('div', { className: 'bt-section-title' }, t('Working folder')),
           h(FolderMenu, { value: bot.workDir, actions, run, wide: true, onPick: workDir => run(actions.updateBot(bot.id, { workDir })) })),
         bot.instructions
-          ? h(About, { key: 'about', text: bot.instructions })
+          ? h(About, { key: 'about', text: bot.instructions, onSave: instructions => run(actions.updateBot(bot.id, { instructions })) })
           : h('button', { key: 'about', type: 'button', className: 'bt-more', onClick: () => setView('settings') }, t('Add instructions in Bot settings')),
         roster.memory === false ? null : h(MemoryRow, { key: 'memory', owner: { id: bot.id, name: bot.name }, actions }),
         usage ? h('div', { key: 'usage' }, h('div', { className: 'bt-section-title' }, t('Usage')),
