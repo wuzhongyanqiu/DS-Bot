@@ -10,6 +10,7 @@ import { PANEL_LINGER_MS, BotPanel } from './browser-pane.js'
 import { frameLayout, FALLBACK_SIDEBAR_WIDTH } from './frame-layout.js'
 import { MemoryDialog } from './memory-panel.js'
 import { JobsPanel } from './jobs.js'
+import { IsolationGateDialog } from './isolation-lab.js'
 import { useLinger } from './motion.js'
 
 // How long a closing dialog or menu stays for its exit (see their [data-leaving] CSS).
@@ -69,5 +70,6 @@ export function Overlays({ useRoster, useUi, useSessions, useSessionStatus, useA
     menu ? createPortal(h(ContextMenu, { key: `${menu.kind ?? ''}:${menu.id}:${menu.x}:${menu.y}`, menu, roster, actions, leaving: menuLeaving }), document.body) : null,
     settings ? createPortal(h(SettingsDialog, { page: settings.page, id: settings.id, roster, actions, useUpdate, leaving: settingsLeaving }), document.body) : null,
     owner ? createPortal(h(MemoryDialog, { key: owner.id, owner, actions, leaving: memoryLeaving }), document.body) : null,
-    jobs ? createPortal(h(JobsPanel, { roster, useJobs, useUi, actions, leaving: jobsLeaving }), document.body) : null)
+    jobs ? createPortal(h(JobsPanel, { roster, useJobs, useUi, actions, leaving: jobsLeaving }), document.body) : null,
+    ui.isolationGate ? createPortal(h(IsolationGateDialog, { actions }), document.body) : null)
 }

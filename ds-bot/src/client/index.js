@@ -74,7 +74,8 @@ export function apply(ctx) {
   let seenAt = seenStore.read()
   // `details` is the panel's subject (a Session id); `view` picks details or the
   // subject Bot's browser inside it.
-  const ui = createSource({ details: null, view: 'details', renaming: false, tab: null, side: null, newChat: null, exchange: null, menu: null, voice: null, palette: null, quote: null, settings: null, memory: null, jobs: false, jobsDismissed: {}, toast: null, signIn: null, renameAgent: null, unread: unreadStore.read(), reactions: reactionStore.read(), visits: {}, panelYield: false, leftDrawer: false, bootFailed: false, goalCompose: null, goalOpen: null })
+  const ui = createSource({ details: null, view: 'details', renaming: false, tab: null, side: null, newChat: null, exchange: null, menu: null, voice: null, palette: null, quote: null, settings: null, memory: null, jobs: false, jobsDismissed: {}, isolationLab: false, isolationGate: false, toast: null, signIn: null, renameAgent: null, unread: unreadStore.read(), reactions: reactionStore.read(), visits: {}, panelYield: false, leftDrawer: false, bootFailed: false, goalCompose: null, goalOpen: null })
+  let isolationUnlocked = false
   // The left column's kept preference, and the frame geometry the layout rules
   // in frame-layout.js read: the window and the shell's collapsed track come from
   // installFrameWatch, the open column's width is the user's own.
@@ -623,6 +624,18 @@ export function apply(ctx) {
     // Background jobs: the panel, each job's output stream, and the human stop.
     openJobs: () => ui.set(state => (state.jobs ? state : { ...state, jobs: true })),
     closeJobs: () => ui.set(state => (state.jobs ? { ...state, jobs: false } : state)),
+    openIsolationLab: () => ui.set(state => (isolationUnlocked ? { ...state, isolationLab: true, isolationGate: false } : { ...state, isolationGate: true })),
+    closeIsolationGate: () => ui.set(state => (state.isolationGate ? { ...state, isolationGate: false } : state)),
+    unlockIsolationLab: async (passcode) => {
+      await call('isolation-unlock', { passcode })
+      isolationUnlocked = true
+      ui.set(state => ({ ...state, isolationGate: false, isolationLab: true }))
+    },
+    exitIsolationLab: () => ui.set(state => (state.isolationLab ? { ...state, isolationLab: false } : state)),
+    lockIsolationLab: () => {
+      isolationUnlocked = false
+      ui.set(state => ({ ...state, isolationLab: false, isolationGate: false }))
+    },
     dismissJob: (id) => ui.set(state => (state.jobsDismissed?.[id] ? state : { ...state, jobsDismissed: { ...state.jobsDismissed, [id]: true } })),
     observeJob: (sessionId, id) => jobService?.observe(sessionId, id) ?? (() => {}),
     killJob: (sessionId, id) => jobService?.kill(sessionId, id) ?? Promise.resolve({ ok: false, error: { message: 'Background jobs are unavailable' } }),

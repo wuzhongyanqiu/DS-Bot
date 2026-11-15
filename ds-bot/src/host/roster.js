@@ -582,6 +582,9 @@ export function install(rt) {
   function checkMembers(members) {
     if (members.length < 2) throw new Error('A group chat needs at least two Bots')
     if (members.length > ROOM_MAX_MEMBERS) throw new Error(`A group chat holds at most ${ROOM_MAX_MEMBERS} Bots`)
+    const hasIsolated = members.some(id => rt.botOf(id)?.isolation === true)
+    const hasPlain = members.some(id => rt.botOf(id)?.isolation !== true)
+    if (hasIsolated && hasPlain) throw new Error('Isolated Bots can only form group chats with other isolated Bots')
     rt.checkNoPrivate(members)
   }
 
@@ -611,10 +614,12 @@ export function install(rt) {
       checkMembers(live)
       const lead = adminId === null || live.includes(adminId) ? adminId : defaultAdmin(live, createdBy)
       const name = custom || autoRoomName(live)
+      const isolatedRoom = live.every(member => rt.botOf(member)?.isolation === true)
       const room = {
         id,
         name,
         ...(custom ? { named: true } : {}),
+        ...(isolatedRoom ? { isolation: true } : {}),
         members: live,
         admin: lead,
         mode: mode ?? 'admin',

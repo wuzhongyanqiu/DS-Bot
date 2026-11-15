@@ -1489,6 +1489,17 @@ const ZH = {
   'Sent': '已发送',
   'Failed': '失败',
 
+  'Isolation Lab': '隔离实验空间',
+  'Enter Isolation Lab': '进入隔离实验空间',
+  'Isolated Bots and their group chats live here. Enter the passcode to continue.': '隔离实验 Bot 及其群聊存放在此空间，请输入密码继续。',
+  'Enter passcode': '请输入密码',
+  'Invalid passcode': '密码不正确',
+  'Unlock': '解锁进入',
+  'Lock': '锁定',
+  'New isolated Bot': '新建隔离 Bot',
+  'New isolated group': '新建隔离群聊',
+  'No isolated Bots or group chats yet.': '暂无隔离 Bot 或隔离群聊。',
+
 }
 
 // Host errors stay English, since Bots read them too; they are translated where the

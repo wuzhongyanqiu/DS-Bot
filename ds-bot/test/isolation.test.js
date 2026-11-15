@@ -531,3 +531,50 @@ test('a copy of an isolation Bot starts without the original’s grants', async 
   assert.equal(copy.isolation, true)
   assert.equal(copy.isolationGrants, undefined)
 })
+
+test('isolation-unlock rejects wrong passcodes and accepts wuzhongyanqiu123', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'ds-bot-iso-gate-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const ctx = fakeContext()
+  let registeredRoute = null
+  const origRegister = ctx.connection.fetch.register
+  ctx.connection.fetch.register = (route) => {
+    registeredRoute = route
+    return origRegister(route)
+  }
+  const rt = createRuntime(ctx, { home: dir })
+  t.after(() => rt.dispose?.())
+  assert.ok(registeredRoute, 'expected API route to be registered')
+
+  const callUnlock = async (passcode) => {
+    const req = new Request('http://localhost/api/bot', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ endpoint: 'isolation-unlock', payload: { passcode } }),
+    })
+    const res = await registeredRoute.fetch(req)
+    return res.json()
+  }
+
+  const bad = await callUnlock('wrong-pass')
+  assert.equal(bad.ok, false)
+  assert.match(bad.error.message, /密码不正确/)
+
+  const good = await callUnlock('wuzhongyanqiu123')
+  assert.equal(good.ok, true)
+  assert.deepEqual(good.value, { unlocked: true })
+})
+
+test('isolated Bots can form group chats with each other, but never with non-isolated Bots', async (t) => {
+  const { rt, stop } = await setup()
+  t.after(stop)
+  const iso2 = await rt.duplicateBot('iso')
+  const isoRoom = await rt.createRoom({ members: ['iso', iso2.id], admin: 'iso', name: 'Iso Squad' })
+  assert.equal(isoRoom.isolation, true)
+  assert.deepEqual(isoRoom.members, ['iso', iso2.id])
+
+  await assert.rejects(
+    rt.createRoom({ members: ['iso', 'plain'], admin: 'iso' }),
+    /isolated/,
+  )
+})

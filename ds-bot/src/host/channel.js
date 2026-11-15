@@ -1,5 +1,5 @@
 // Client channel: the team view the browser renders, and the POST /api/bot endpoints.
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { install as installBtw } from './btw.js'
 import { install as installSide } from './side.js'
@@ -7,7 +7,7 @@ import { install as installTts } from './tts.js'
 import { install as installImageGen } from './imagegen.js'
 import { handoffReply, questionReply, viewReply } from './parts.js'
 import { validateViewAnswer } from 'deep-view/core'
-import { COLORS, EXTRA_COLORS, ISOLATION_TOOLS, ROUTE } from './constants.js'
+import { COLORS, EXTRA_COLORS, ISOLATION_PASSCODE_HASH, ISOLATION_TOOLS, ROUTE } from './constants.js'
 
 const LANGUAGES = { zh: 'Chinese (简体中文)', en: 'English' }
 const RUN_STATS = ['sessionStats', 'tokenUsage', 'contextPressure']
@@ -685,6 +685,15 @@ export function install(rt) {
           const bot = rt.botOf(String(body.botId ?? ''))
           if (bot === undefined) return fail('Unknown Bot', 'bot/not-found')
           return ok(await rt.switchPart(bot.id, String(body.sessionId ?? '')))
+        }
+        case 'isolation-unlock': {
+          const input = String(body.passcode ?? '')
+          const configured = rt.config?.isolationPasscode ?? process.env.DS_BOT_ISOLATION_PASSCODE
+          const valid = configured
+            ? input === configured
+            : createHash('sha256').update(input).digest('hex') === ISOLATION_PASSCODE_HASH
+          if (!valid) throw new Error('隔离实验空间密码不正确')
+          return ok({ unlocked: true })
         }
         case 'diagnostics':
           await rt.load()

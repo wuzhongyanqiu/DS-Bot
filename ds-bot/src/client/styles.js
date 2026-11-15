@@ -179,7 +179,19 @@ html[data-windows-titlebar] .bt-leftcol,html[data-platform=darwin] .bt-leftcol{b
 html[data-bt-collapsing] [class*="_frame"]:has(>[class*="_sidebarCol"]){transition:none!important}
 .bt-leftcol[data-left=drawer]{background:var(--bt-sidebar);box-shadow:8px 0 24px rgba(0,0,0,.14)}
 .bt-leftcol>.bt-side{width:100%}
-.bt-leftcol-foot{display:flex;align-items:center;gap:9px;padding-top:8px;flex:none}
+.bt-leftcol-foot{display:flex;align-items:center;gap:9px;padding-top:8px;flex:none;flex-wrap:wrap}
+.bt-iso-entry-btn{padding:5px 10px;border-radius:999px;border:1px solid var(--bt-line);background:transparent;color:var(--bt-ink-2);font-size:12px;cursor:pointer;white-space:nowrap}
+.bt-iso-entry-btn:hover{background:var(--bt-hover);color:var(--bt-ink)}
+.bt-iso-bar{display:flex;flex-direction:column;gap:6px;padding:8px 10px;margin:0 4px 6px;border-radius:10px;background:var(--bt-hover);border:1px solid var(--bt-line)}
+.bt-iso-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:13px}
+.bt-iso-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.bt-iso-actions button{padding:4px 8px;border-radius:8px;border:1px solid var(--bt-line);background:var(--bt-card);color:var(--bt-ink);font-size:12px;cursor:pointer}
+.bt-iso-actions button:hover{background:var(--bt-hover)}
+.bt-iso-gate-layer{position:fixed;inset:0;z-index:999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.45);backdrop-filter:blur(4px)}
+.bt-iso-gate{width:min(380px,calc(100vw - 32px));padding:20px;border-radius:16px;background:var(--bt-card);border:1px solid var(--bt-line);box-shadow:var(--bt-glass-shadow);display:flex;flex-direction:column;gap:12px}
+.bt-iso-gate h3{margin:0;font-size:16px}
+.bt-iso-gate .bt-input{padding:8px 10px;border-radius:8px;border:1px solid var(--bt-line);background:var(--bt-bg);color:var(--bt-ink);font-size:14px}
+.bt-iso-gate .bt-modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
 .bt-rail{align-items:center;gap:6px;padding:0}
 .bt-rail .bt-row{justify-content:center;width:56px;height:56px;min-height:56px;padding:0;border-radius:16px}
 .bt-rail-top{display:flex;flex-direction:column;align-items:center;gap:8px;padding-bottom:8px}

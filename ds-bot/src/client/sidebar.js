@@ -364,6 +364,7 @@ export function TeamSidebar(props) {
   const view = useUi(value => value.view ?? 'details')
   const panelYield = useUi(value => value.panelYield === true)
   const bootFailed = useUi(value => value.bootFailed === true)
+  const inIsolationLab = useUi(value => value.isolationLab === true)
   props.useRegistry(value => value)
   const frameSnap = props.useFrame ? props.useFrame(value => value) : { viewport: typeof window === 'undefined' ? 0 : window.innerWidth, sidebarWidth: FALLBACK_SIDEBAR_WIDTH, collapsedWidth: 0 }
   const pref = props.useSidebarPref ? props.useSidebarPref(value => value) : 'open'
@@ -391,14 +392,21 @@ export function TeamSidebar(props) {
   const showBots = roster.prefs?.showBots === true
   const order = useMemo(() => {
     const stamps = JSON.parse(updated)
+    if (inIsolationLab) {
+      const entries = [
+        ...roster.bots.filter(bot => bot.isolation === true).map(bot => ({ kind: 'bot', item: bot, at: stamps[currentPart(bot)] ?? bot.createdAt })),
+        ...roster.rooms.filter(room => room.isolation === true).map(room => ({ kind: 'room', item: room, at: stamps[room.id] ?? room.createdAt })),
+      ]
+      return entries.sort((a, b) => Number(Boolean(b.item.pinned)) - Number(Boolean(a.item.pinned)) || b.at - a.at)
+    }
     const entries = [
-      ...(showBots ? roster.bots.filter(bot => bot.id !== roster.mainBotId).map(bot => ({ kind: 'bot', item: bot, at: stamps[currentPart(bot)] ?? bot.createdAt })) : []),
-      ...roster.rooms.map(room => ({ kind: 'room', item: room, at: stamps[room.id] ?? room.createdAt })),
+      ...(showBots ? roster.bots.filter(bot => bot.id !== roster.mainBotId && bot.isolation !== true).map(bot => ({ kind: 'bot', item: bot, at: stamps[currentPart(bot)] ?? bot.createdAt })) : []),
+      ...roster.rooms.filter(room => room.isolation !== true).map(room => ({ kind: 'room', item: room, at: stamps[room.id] ?? room.createdAt })),
       // The Agent sorts by its most recent Session, falling back to when it was added.
       ...(roster.agents ?? []).map(agent => ({ kind: 'agent', item: agent, at: Math.max(0, ...agent.sessions.map(id => stamps[id] ?? 0)) || agent.createdAt })),
     ]
     return entries.sort((a, b) => Number(Boolean(b.item.pinned)) - Number(Boolean(a.item.pinned)) || b.at - a.at)
-  }, [roster, updated, showBots])
+  }, [roster, updated, showBots, inIsolationLab])
   const main = roster.byId[roster.mainBotId]
   // The Main Bot's tile already fills the list; the hint is for a team without one.
   const emptyList = wideContent && roster.ready && !main && order.length === 0
@@ -639,18 +647,32 @@ export function TeamSidebar(props) {
   // the rail the new-chat button above it.
   const foot = wideContent
     ? h('div', { className: 'bt-leftcol-foot' },
+        !inIsolationLab ? h('button', { type: 'button', className: 'bt-iso-entry-btn', onClick: () => actions.openIsolationLab() }, t('Isolation Lab')) : null,
         h(ShellFooterActions, { useFooterActions: props.useFooterActions, wide: true }),
         h(AccountLauncher, { seat: false, actions }))
     : h('div', { className: 'bt-leftcol-foot bt-leftcol-foot-rail' },
         h('button', { type: 'button', className: 'bt-round', 'aria-label': t('New…'), title: t('New…'), onClick: () => actions.openNewChat('new') }, h(PlusIcon)),
         h(ShellFooterActions, { useFooterActions: props.useFooterActions, wide: false }),
         h(AccountLauncher, { seat: false, actions }))
+  const isolationHeader = inIsolationLab && wideContent
+    ? h('div', { className: 'bt-iso-bar' },
+        h('div', { className: 'bt-iso-head' },
+          h('strong', null, t('Isolation Lab')),
+          h('div', { className: 'bt-iso-actions' },
+            h('button', { type: 'button', onClick: () => actions.exitIsolationLab() }, t('Back')),
+            h('button', { type: 'button', onClick: () => actions.lockIsolationLab() }, t('Lock')))),
+        h('div', { className: 'bt-iso-actions' },
+          h('button', { type: 'button', onClick: () => actions.openNewChat('isolation-bot') }, t('New isolated Bot')),
+          h('button', { type: 'button', onClick: () => actions.openNewChat('isolation-group') }, t('New isolated group'))))
+    : null
   const content = h('div', { className: wideContent ? 'bt-side' : 'bt-side bt-rail', onKeyDown: typeToSearch },
     top,
+    isolationHeader,
     wideContent && roster.readOnly ? h('div', { className: 'bt-hint bt-read-only', role: 'status' }, hostText(roster.readOnly)) : null,
     h('div', { ref: listRef, className: 'bt-list', role: 'region', 'aria-label': t('Bot list') },
-      wideContent ? (main ? h(BotRow, { ...rowProps, bot: main, marked: markedUnread[main.id] === true }) : roster.ready ? null : h('div', { className: 'bt-hint' }, bootFailed ? bootHint() : t('Setting up your Main Bot…'))) : null,
-      emptyList ? h('div', { className: 'bt-hint' }, t('No group chats yet. Create a group chat, or turn on Show Bot chats in Settings.')) : null,
+      !inIsolationLab && wideContent ? (main ? h(BotRow, { ...rowProps, bot: main, marked: markedUnread[main.id] === true }) : roster.ready ? null : h('div', { className: 'bt-hint' }, bootFailed ? bootHint() : t('Setting up your Main Bot…'))) : null,
+      inIsolationLab && wideContent && order.length === 0 ? h('div', { className: 'bt-hint' }, t('No isolated Bots or group chats yet.')) : null,
+      !inIsolationLab && emptyList ? h('div', { className: 'bt-hint' }, t('No group chats yet. Create a group chat, or turn on Show Bot chats in Settings.')) : null,
       order.map(entry => (entry.kind === 'bot'
         ? h(BotRow, { key: entry.item.id, ...rowProps, bot: entry.item, marked: markedUnread[entry.item.id] === true })
         : entry.kind === 'room'

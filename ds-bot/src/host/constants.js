@@ -81,6 +81,7 @@ export const HIDDEN_SECTIONS = new Set([...HIDDEN_TOOLS.map(name => `tool:${name
 // line of instructions, a stale tool list, or a newer plugin cannot widen it.
 export const ISOLATION_TOOLS = ['list_bots', 'ask_user', 'show_view', 'read_own_chat', 'remember', 'forget', 'recall', 'update_bot', 'request_secret', 'set_model_endpoint', 'generate_image']
 export const ISOLATION_REFUSAL = 'This Bot is in an isolation space: it can chat, but commands, files, the network and every other tool are off. Answer in words instead of running or reading anything.'
+export const ISOLATION_PASSCODE_HASH = '38cb221132630e458dc78ee5732a8531a3983949518515e48537e5f68b222999'
 
 // A team's one DSH Agent: a plain dsh entry in the sidebar, not a Bot. Its Sessions
 // are ordinary root Sessions, so the team tools must not be offered to them.

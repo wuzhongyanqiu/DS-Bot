@@ -11,21 +11,22 @@ import { sendsOnEnter } from './enter-key.js'
 export function NewChat({ mode, roster, actions }) {
   const [query, setQuery] = useState('')
   const [picked, setPicked] = useState([])
-  const [group, setGroup] = useState(mode === 'group')
+  const [group, setGroup] = useState(mode === 'group' || mode === 'isolation-group')
   // A new group chat picks its admin first, then the other members.
   const [admin, setAdmin] = useState(null)
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [cursor, setCursor] = useState(0)
-  // The Create Bot form, opened straight from 'create' mode or from the list.
-  const [draft, setDraft] = useState(mode === 'create' ? { name: '', fromList: false } : null)
+  // The Create Bot form, opened straight from 'create' / 'isolation-bot' mode or from the list.
+  const [draft, setDraft] = useState(mode === 'create' || mode === 'isolation-bot' ? { name: '', fromList: false, isolation: mode === 'isolation-bot' } : null)
   const inputRef = useRef(null)
   const close = () => actions.closeOverlay()
   useEscape(close)
   const paneLeft = usePaneLeft()
   const wanted = query.trim().toLowerCase()
-  const matches = roster.bots.filter(bot => !picked.includes(bot.id) && bot.id !== admin && (wanted === '' || bot.name.toLowerCase().includes(wanted) || (bot.role ?? '').toLowerCase().includes(wanted)))
+  const isolationOnly = mode === 'isolation-group'
+  const matches = roster.bots.filter(bot => !picked.includes(bot.id) && bot.id !== admin && (isolationOnly ? bot.isolation === true : bot.isolation !== true) && (wanted === '' || bot.name.toLowerCase().includes(wanted) || (bot.role ?? '').toLowerCase().includes(wanted)))
   const choosingAdmin = group && admin === null
   const exact = roster.bots.some(bot => bot.name.toLowerCase() === wanted)
   const pickedBots = picked.map(id => roster.byId[id]).filter(Boolean)
@@ -116,6 +117,7 @@ export function NewChat({ mode, roster, actions }) {
     return h('div', { className: 'bt-pane', style: { left: paneLeft } },
       h(CreateBot, {
         roster, actions, start: draft, brief: message.trim(), canGoBack: draft.fromList,
+        initialIsolation: Boolean(draft.isolation),
         onBack: draft.fromList ? () => { setDraft(null); setTimeout(() => inputRef.current?.focus()) } : close,
         onCreated: created,
       }))
